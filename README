@@ -1,0 +1,124 @@
+
+				 --- Yancat ---
+
+General purpose network/file[descriptor] unidirectional cat utility.
+
+:::: intro
+
+So why another implementation of such a tool ?
+
+- I needed something with certain features that are either hard to find or
+  almost nonexistent - to name a few: reblocking, checksumming, mp and/or mt
+  support, .... It's not that there're no tools around that cannot do those,
+  but kinda hard to find one that does /all/ what I needed (and without
+  nasty data-eating bugs - one of the popular tools had those).
+- I also needed something natively and cleanly compiling under MinGW, even if in
+  slightly limited form when compared to its unix brethrens.
+
+Either way, the end effect is - functionally - a sort of small crossbreed
+between mbuffer and socat, but still supporting certain features that neither
+those two support or not at the same time.
+
+:::: features available at runtime:
+
+- threading / forking / single process mode (denoted as mt / mp / sp)
+- cpu affinity settings
+- in sp mode - preferred counts of blocks to read and write (separate values)
+  per iteration
+- buffer & block sizes (obviously ...)
+- reblocking (separate block sizes on input and output side)
+- strict reblocking writes (last block is padded with 0s if necessary)
+- byte (aka "line") mode (reading/writing as soon as there is any space/data
+  available, but no more than one block at the time)
+- optional fsync after transfer
+- input and output crc checksumming (cksum compatible)
+- supports preopened file descriptors, regular files, sockets
+- TCP and UDP (the latter assuming you /really know/ what you're doing, keep
+  checksumming options in mind as well - on both sides of the transfer)
+- small subset of useful socket options
+- huge pages - (linux only, through hugetlbfs mount (autodetected))
+- "hardware" mmap-/shmat- wrapped circular buffer used, if possible
+- stall points for reading (buffer use must be less than X after overrun before
+  reading is allowed again)
+- stall points for writing (buffer use must be more than X after underrun
+  before writing is allowed again)
+- builtin looping using the same options (until error, or user's interruption);
+  this essentially saves you one shell loop when both ends are persistent
+  (think socket on one side, and tape device on the other)
+
+:::: features selected during compilation:
+
+ through config.h:
+
+- posix named/unnamed or SysV semaphores
+- posix or SysV shared memory, or just malloc (forces sp mode)
+- mutexes - (also available in mp mode)
+
+ through make arguments (just peek into Makefile for more details):
+
+- profiling generation (PROFILE=1) / use (PROFILE=2)
+- debug build (DEBUG=1) (nothing particulary special about it though)
+- installation directory (PREFIX=....), defaults to /usr/local
+- Makefile.devel as an optional include
+
+ autoselected / directly editable:
+
+- availability of mt, affinity, lfs
+
+:::: limitations / extensions / info:
+
+ win32:
+
+- you need MingW + MSYS to compile it (with banal Makefile adjustments you can
+  ignore MSYS)
+- only sp mode is allowed; tbh, it's still pretty sufficient :)
+- as a result - no features related to mp / mt functionality are enabled and/or
+  compiled in (and non-posix api doesn't make them particulary appealing)
+- feel free to experiment, though non-unix environment doesn't make it too
+  enjoyable ;)
+
+ bsd:
+
+- not much experience besides old openbsd systems; freebsd has almost the same
+  features enabled as linux by default (you might want to adjust those, I have
+  no freebsd based test machine); the rest of bsd systems - mt is disallowed,
+  and sems & shm default to classic SysV api
+
+ linux:
+
+- hugetlbfs mount is detected and used if requested through options
+- affinity settings by default enabled
+
+ generic:
+
+- the code is by default compiled at very aggresive settings - both in terms of
+  enabled warnings and enabled optimization options. Some seemingly pointless
+  casts in code reflect that; consider Makefile.devel.example include for
+  further proofing if you plan to hack with the code a bit
+
+random tips / info:
+
+- 7-zip (inc. windows) can produce tars /and/ pipe them through stdin|out /and/
+  with largefile support /and/ is blocking agnostic; gloria 7-zip ! Really,
+  this is probably your best friend if you need native tar handling in windows
+  environemnt
+- keep in mind [bsd]tar's blocking options - they will close pipe in your face
+  if you don't set it properly and if you changed block size on the other side
+
+compilation:
+
+- see "features selected during compilation" above
+- check config.h and Makefile
+- or ... just type: make && make install PREFIX=<directory> (for less
+  technically inclined folks)
+
+Use -h option to get overview of arguments and available socket options on your
+host. The return value is 0 if it's assured that transfer completed fine, otherwise
+it's 255.
+
+If you find any problems with the program, don't hesitate to ask. Preferably
+use [yancat] tag in subject mail in such case.
+
+Enjoy :)
+
+Michal Soltys <soltys@ziu.info>

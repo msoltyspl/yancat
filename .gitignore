@@ -1,0 +1,8 @@
+*
+!*.[hc]
+version.h
+!Makefile
+!README
+!TODO
+!xxx
+!xxx[0-9]

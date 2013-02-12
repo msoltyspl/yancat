@@ -1,0 +1,2 @@
+#CWFLAGS += -Werror
+#CWFLAGS += -Wconversion -Wstrict-overflow=5 -pedantic
