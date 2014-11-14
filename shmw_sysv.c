@@ -39,6 +39,13 @@
 # endif
 #endif
 
+/* Standard attach flags we rely on */
+#ifdef SHM_RND
+# define AT_FLAGS SHM_RND
+#else
+# define AT_FLAGS 0
+#endif
+
 int shmw_dt(struct shm_s *s)
 {
 	if (!s)
@@ -71,10 +78,9 @@ int shmw_dtor(struct shm_s *s)
 int shmw_ctor(struct shm_s *s, const char *name, size_t *_siz, size_t huge, int circ, int sems)
 {
 	int flags_g = IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR;
-	int flags_a = SHM_RND;
 	uint8_t *addr = NULL, *addrc = NULL, *addrt;
 	size_t siz, page;
-	int id, iaflag = 0;
+	int id, ia64 = 0;
 
 	if (!s || !name)
 		return -1;
@@ -92,12 +98,12 @@ int shmw_ctor(struct shm_s *s, const char *name, size_t *_siz, size_t huge, int 
 		flags_g |= SHM_HUGETLB;
 # ifdef __ia64__
 		addr = (uint8_t *)(0x8000000000000000ULL);
-		iaflag = 1;
+		ia64 = 1;
 # endif
 	}
 #endif
 
-	siz = _YALIGN(*_siz, _YMAX(page, SHMLBA));
+	siz = _YALIGN(*_siz, _YMAX(page, (size_t)SHMLBA));
 #if 0
 	/* this is far from perfect, but ... */
 	key = (key_t)((crc_str(name) & ~0xFFFFu) | (rand() & 0xFFFFu));
@@ -109,7 +115,7 @@ int shmw_ctor(struct shm_s *s, const char *name, size_t *_siz, size_t huge, int 
 	}
 	s->id = id;
 
-	addr = shmat(id, addr, flags_a);
+	addr = shmat(id, addr, AT_FLAGS);
 	if (addr == (void *)-1) {
 		fprintf(stderr, "error: SysV shm '%s': shmat(): %s\n", name, strerror(errno));
 		goto outid;
@@ -118,15 +124,15 @@ int shmw_ctor(struct shm_s *s, const char *name, size_t *_siz, size_t huge, int 
 	if (!circ)
 		goto circex;
 	/* try above */
-	addrc = shmat(id, addr + siz, flags_a);
+	addrc = shmat(id, addr + siz, AT_FLAGS);
 	if (addrc != (void *)-1 && (addr + siz == addrc || addrc + siz == addr))
 		goto circok;
 	if (addrc != (void *)-1)
 		shmdt(addrc);
-	if (iaflag)
+	if (ia64)
 		goto circex;
 	/* try below */
-	addrc = shmat(id, addr - siz, flags_a);
+	addrc = shmat(id, addr - siz, AT_FLAGS);
 	if (addrc != (void *)-1 && (addr + siz == addrc || addrc + siz == addr))
 		goto circok;
 	if (addrc != (void *)-1)
