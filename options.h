@@ -21,6 +21,8 @@
 
 #include "parse.h"
 
+enum mode_t {mp = 1, mt, sp};
+
 struct options_s {
 	const char *fd[2];
 	const char *file[2];
@@ -30,7 +32,8 @@ struct options_s {
 	size_t wblk, wcnt;
 	size_t rsp, wsp;
 	size_t hpage;
-	int fsync, strict, rline, wline, rcrc, wcrc, onetask, thread, loop, cpuM, cpuS;
+	int fsync, strict, rline, wline, rcrc, wcrc, loop, cpuR, cpuW;
+	enum mode_t mode;
 };
 
 int  opt_parse(struct options_s*, int argc, char **argv);

@@ -60,10 +60,12 @@ static void set_default(struct options_s *opts)
 	opts->wblk = 65536;
 	opts->rcnt = 1;
 	opts->wcnt = 1;
-	opts->cpuM = -1;
-	opts->cpuS = -1;
+	opts->cpuR = -1;
+	opts->cpuW = -1;
 #ifdef h_mingw
-	opts->onetask = 1;
+	opts->mode = sp;
+#else
+	opts->mode = mp;
 #endif
 }
 
@@ -93,7 +95,7 @@ static void help(void)
 		"	-t	use posix threads instead of processes\n"
 #endif
 #ifndef h_mingw
-		"	-1	force single task mode\n"
+		"	-1	use single process\n"
 #endif
 		"	-y	fsync output after the transfer\n"
 		"	-r	strict blocking writes\n"
@@ -242,15 +244,15 @@ int opt_parse(struct options_s *opts, int argc, char **argv)
 				break;
 #ifdef h_affi
 			case 'u':
-				opts->cpuM = (int)get_ul(optarg);
-				if (errno || opts->cpuM >= CPU_SETSIZE) {
+				opts->cpuR = (int)get_ul(optarg);
+				if (errno || opts->cpuR >= CPU_SETSIZE) {
 					fprintf(stderr, err_inv, opt);
 					goto out;
 				}
 				break;
 			case 'U':
-				opts->cpuS = (int)get_ul(optarg);
-				if (errno || opts->cpuS >= CPU_SETSIZE) {
+				opts->cpuW = (int)get_ul(optarg);
+				if (errno || opts->cpuW >= CPU_SETSIZE) {
 					fprintf(stderr, err_inv, opt);
 					goto out;
 				}
@@ -261,12 +263,12 @@ int opt_parse(struct options_s *opts, int argc, char **argv)
 				break;
 #ifdef h_thr
 			case 't':
-				opts->thread = 1;
+				opts->mode = mt;
 				break;
 #endif
 #ifndef h_mingw
 			case '1':
-				opts->onetask = 1;
+				opts->mode = sp;
 				break;
 #endif
 			case 'y':
@@ -304,6 +306,7 @@ int opt_parse(struct options_s *opts, int argc, char **argv)
 	opts->rsp = (size_t)(0.5 + rs*(double)opts->bsiz);
 	opts->wsp = (size_t)(0.5 + ws*(double)opts->bsiz);
 
+	/* we require at least blk + 1 space in both cases (some sharp inequalities are possible in some cases) */
 	if (opts->rsp) {
 		if (opts->rsp <= blk || opts->rsp >= opts->bsiz - blk) {
 			fputs("Read stall point is too extreme.\n", stderr);

@@ -28,14 +28,18 @@
 #include "buffer.h"
 #include "crc.h"
 
+/*
+ * we require sharp inequalities here, as otherwise we could end (after
+ * reading) with got == did, and that implies empty buffer
+ */
 size_t buf_can_r(struct buf_s *restrict buf)
 {
 	size_t emp;
 
 	emp = (buf->did - buf->got) & buf->mask;
-
 	if unlikely(!emp)
 		emp = buf->size;
+
 	if unlikely(buf->rstall) {
 		if likely(emp < buf->rsp)
 			return 0;
@@ -232,7 +236,7 @@ static void rep_crc(int c, CRCINT _crc, unsigned long long cnt)
 void buf_report_stats(struct buf_s * restrict buf)
 {
 	fprintf (stderr,
-		"\nBuffer stats:\n"
+		"Buffer stats:\n"
 		"  read:  %llu (%llu%c blocks)\n"
 		"  wrote: %llu (%llu%c blocks)\n",
 		buf->allin,  buf->allin / buf->rblk,  buf->allin  % buf->rblk ? '+':' ',
@@ -247,7 +251,7 @@ void buf_report_stats(struct buf_s * restrict buf)
 void buf_report_init(struct buf_s * restrict buf)
 {
 	fprintf (stderr,
-		"\nBuffer setup:\n"
+		"Buffer setup:\n"
 		"  size:      %zu\n"
 		"  re. block: %zu%s\n"
 		"  wr. block: %zu%s\n"

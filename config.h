@@ -26,14 +26,17 @@
 #if 0
 #  define has_sem_sysv 1
 #  define has_sem_posix 1
+#  define has_sem_posixu 1
 #  define has_shm_sysv 1
+#  define has_shm_posix 1
 #  define has_shm_malloc 1
 #  define has_mtx_sem 1
+#  define has_mtx_posix 1
 #endif
 
-#  define has_mtx_posix 1
-#  define has_sem_posixu 1
-#  define has_shm_posix 1
+#  define has_sem_sysv 1
+#  define has_mtx_sem 1
+#  define has_shm_sysv 1
 
 # elif defined(h_freebsd)
 

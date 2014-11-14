@@ -24,19 +24,12 @@
 /*
  * in order: cpu+comp barrier, comp barrier, variable barrier
  */
-#define __fmb() __sync_synchronize()
-#define __cmb()  __asm__ __volatile__("":::"memory")
-#define __cvmb(x) __asm__ __volatile__("":"=m"(x):"m"(x))
+#define full_barrier() __sync_synchronize()
+#define barrier() __asm__ __volatile__("":::"memory")
+/* #define var_barrier(x) __asm__ __volatile__("":"=m"(x):"m"(x)) */
+#define ACCESS_ONCE(x) (*(volatile typeof(x) *)&(x))
 
-#define __cmpxchg(x,o,n) __sync_bool_compare_and_swap(&(x),(o),(n));
-
-/* so ugly ... */
-#if 0
-#define acc_r(t,n) static inline const t n(const t * restrict _d) { return *(const volatile t *)_d; }
-#define acc_w(t,n) static inline void    n(      t * restrict _d, t v) { *(volatile t *)_d  = v; }
-acc_r(sig_atomic_t, _vr)
-acc_w(sig_atomic_t, _vw)
-#endif
+#define cmpxchg(x,o,n) __sync_bool_compare_and_swap(&(x),(o),(n));
 
 #define _YMAX(x,y) ((x) > (y) ? (x) : (y))
 #define _YMIN(x,y) ((x) < (y) ? (x) : (y))

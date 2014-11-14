@@ -53,140 +53,121 @@
 #include "shmw.h"
 #include "buffer.h"
 
+enum role_t {arbiter = 0, reader, writer, crcer};
+
 static struct options_s g_opts;
 static struct fdpack_s g_fdi, g_fdo;
-static pid_t g_pid = -1;
 
-#define errl_mt 0
-#define errl_ms 1
-#define errl_mi 2
-#define errl_st 3
-#define errl_ss 4
-#define errl_si 5
-#define errl_cnt (errl_si + 1)
+/* crc not implemented yet as a separate thread */
+#ifdef h_thr
+static pthread_t g_threads[4] = {0};
+static __thread enum role_t g_role = arbiter;
+#else
+static enum role_t g_role = arbiter;
+#endif
 
-static const char *errlog_str[errl_cnt] = {
-	[errl_mt] = "merr!",
-	[errl_ms] = "msig!",
-	[errl_mi] = "mini!",
-	[errl_st] = "serr!",
-	[errl_ss] = "ssig!",
-	[errl_si] = "sini!",
+/* these must follow role_t enum definition */
+#define ERRL_CNT (sizeof(errlog_str)/sizeof(errlog_str[0]))
+static const char *errlog_str[] = {
+	[0] = "arb_sig!", [1] = "rdr_sig!", [2]  = "wrr_sig!", [3]  = "crc_sig!", 
+	[4] = "arb_ini!", [5] = "rdr_ini!", [6]  = "wrr_ini!", [7]  = "crc_ini!", 
+	[8] = "arb_err!", [9] = "rdr_err!", [10] = "wrr_err!", [11] = "crc_err!", 
 };
+
+static struct shm_s g_chunk;
 
 static struct shr_s {
 	struct buf_s buf;
 	size_t xrsiz, xwsiz;
+	int errR, errW;
 	sig_atomic_t done, mwait, swait;
-	sig_atomic_t errlog[errl_cnt];
+	sig_atomic_t errlog[ERRL_CNT];
 #ifndef h_mingw
 	struct mtx_s vars;
-	struct sem_s nospace, nodata, sync2s;
+	struct sem_s nospace, nodata;
 #endif
 } *g_shm = NULL;
 
 static struct buf_s *g_buf;
-static struct shm_s g_chunk;
 
 #ifndef h_mingw
-static struct sem_s *g_nospace, *g_nodata, *g_sync2s;
 static struct mtx_s *g_vars;
+static struct sem_s *g_nospace, *g_nodata;
 
-#if 0
-static int sigs_ign[] = { SIGPIPE, SIGTTIN, SIGTTOU, SIGHUP, SIGUSR1, SIGUSR2 };
-static int sigs_end[] = { SIGTERM, SIGINT, SIGCHLD };
-#endif
-
-static int sigs_ign[] = { SIGPIPE, SIGTTIN, SIGTTOU, SIGHUP, SIGUSR1, SIGUSR2, SIGCHLD };
-static int sigs_end[] = { SIGTERM, SIGINT };
+static int sigs_ign[] = { SIGPIPE, SIGTTIN, SIGTTOU, SIGHUP, SIGUSR1, SIGUSR2, SIGCHLD, 0 };
+static int sigs_end[] = { SIGTERM, SIGINT, 0 };
 
 #endif
 
-static void release_master(void)
+/*
+ * called if there was an error during initialization - release all locks, make
+ * sure nothing blocks at any point; g_role is thread local, so errlog will get
+ * proper value
+ */
+static void release(void)
 {
-	g_shm->errlog[errl_si] = 1;
+	g_shm->errlog[4 + g_role] = 1;
 	g_shm->done = 2;
-	__cmb();
+	barrier();
 #ifndef h_mingw
-	Vb(g_nospace);
-	Vb(g_sync2s);
+	if (g_opts.mode != sp) {
+		Vb(g_nodata);
+		Vb(g_nospace);
+	}
 #endif
 }
 
-static void release_slave(void)
+static int cleanup_arbiter(void)
 {
-	g_shm->errlog[errl_mi] = 1;
-	g_shm->done = 2;
-	__cmb();
 #ifndef h_mingw
-	Vb(g_nodata);
+	if (g_opts.mode != sp) {
+		semw_dtor(g_nodata);
+		semw_dtor(g_nospace);
+		mtxw_dtor(g_vars);
+	}
 #endif
-}
-
-static int cleanup_master(void)
-{
 	buf_dtor(g_buf);
-#ifndef h_mingw
-	semw_dtor(g_nodata);
-	semw_dtor(g_nospace);
-	semw_dtor(g_sync2s);
-	mtxw_dtor(g_vars);
-#endif
 	shmw_dtor(&g_chunk);
 	return 0;
 }
 
-static int cleanup_slave(void)
+static int cleanup_child(void)
 {
-	buf_dt(g_buf);
 #ifndef h_mingw
-	semw_dt(g_nodata);
-	semw_dt(g_nospace);
-	semw_dt(g_sync2s);
-	mtxw_dt(g_vars);
+	if (g_opts.mode != sp) {
+		semw_dt(g_nodata);
+		semw_dt(g_nospace);
+		mtxw_dt(g_vars);
+	}
 #endif
+	buf_dt(g_buf);
 	shmw_dt(&g_chunk);
 	return 0;
 }
 
 #ifndef h_mingw
 
-static void sh_rreq_end(int sig __attribute__ ((__unused__)))
+static void sh_terminate(int sig __attribute__ ((__unused__)))
 {
 	g_shm->done = 2;
-	g_shm->errlog[errl_ms] = 1;
-	__cmb();
+	g_shm->errlog[g_role] = 1;
+	barrier();
 }
 
-static void sh_wreq_end(int sig __attribute__ ((__unused__)))
-{
-	g_shm->done = 2;
-	g_shm->errlog[errl_ss] = 1;
-	__cmb();
-}
-
-static int setup_sig(int s, void (*f)(int))
-{
-	struct sigaction igp;
-
-	igp.sa_handler = f;
-	/* igp.sa_flags = SA_RESTART; */
-	igp.sa_flags = SA_NOCLDSTOP;
-	sigfillset(&igp.sa_mask);
-
-	if (sigaction(s, &igp, NULL) < 0) {
-		fprintf(stderr, "sigaction(): can't set handler of '%s': %s\n", strsignal(s), strerror(errno));
-		return -1;
-	}
-	return 0;
-}
-
-static int setup_sigs(const int *tab, int cnt, void (*f)(int))
+static int setup_sigs(const int *tab, void (*f)(int))
 {
 	int i;
-	for (i = 0; i < cnt; i++) {
-		if (setup_sig(tab[i], f) < 0)
+	struct sigaction igp;
+
+	for (i = 0; tab[i]; i++) {
+		igp.sa_handler = f;
+		/* note the code works fine whether restart is specified or not */
+		igp.sa_flags = SA_NOCLDSTOP | SA_RESTART;
+		sigfillset(&igp.sa_mask);
+		if (sigaction(tab[i], &igp, NULL) < 0) {
+			fprintf(stderr, "sigaction(): can't set handler of '%s': %s\n", strsignal(tab[i]), strerror(errno));
 			return -1;
+		}
 	}
 	return 0;
 }
@@ -196,105 +177,174 @@ static int setup_sigs(const int *tab, int cnt, void (*f)(int))
 static int setup_env(void)
 {
 	int noshr;
-	int mp = !(g_opts.thread || g_opts.onetask);
+	int mpok = (g_opts.mode == mp);
 	size_t siz = sizeof(struct shr_s);
 
 	fputc('\n', stderr);
 
+#ifndef h_mingw
+	/* setup signal handlers */
+	if (setup_sigs(sigs_ign, SIG_IGN) < 0)
+		return -1;
+	if (setup_sigs(sigs_end, &sh_terminate) < 0)
+		return -1;
+#endif
+
+	/* main shared chunk of memory with buffer, semaphores and so on */
 	if ((noshr = shmw_ctor(&g_chunk, "/yancat-main", &siz, 0, 0, 1)) < 0)
 		return -1;
-	mp = mp && !noshr;
+	mpok = mpok && !noshr;
 	g_shm = (struct shr_s *)shmw_ptr(&g_chunk);
 	memset(g_shm, 0, siz);
-#ifndef h_mingw
-	if (mtxw_ctor(&g_shm->vars, "/yancat-vars", mp) < 0)
-		goto out1;
-	g_vars = &g_shm->vars;
-	if (semw_ctor(&g_shm->nospace, "/yancat-nospace", mp, 0) < 0)
-		goto out2;
-	g_nospace = &g_shm->nospace;
-	if (semw_ctor(&g_shm->nodata, "/yancat-nodata", mp, 0) < 0)
-		goto out3;
-	g_nodata = &g_shm->nodata;
-	if (semw_ctor(&g_shm->sync2s, "/yancat-sync2s", mp, 0) < 0)
-		goto out4;
-	g_sync2s = &g_shm->sync2s;
-#endif
 
-	/* so far so good, now buffer object */
+	/*
+	 * buffer object located in the above chunk; buffer itself allocates
+	 * main and bounce areas (if applicable)
+	 */
 	if ((noshr = buf_ctor(&g_shm->buf, g_opts.bsiz, g_opts.rblk, g_opts.wblk, g_opts.hpage)) < 0) {
 		fprintf (stderr, "setup_env(): buffer initialization failed.\n");
-		goto out5;
+		goto out1;
 	}
-	mp = mp && !noshr;
-
+	mpok = mpok && !noshr;
 	g_buf = &g_shm->buf;
-	buf_setextra(g_buf, g_opts.rline, g_opts.wline, g_opts.rcrc, g_opts.wcrc, g_opts.rsp, g_opts.wsp);
 
-	/* return 1 if we should fork */
-	return mp;
-out5:
+	/* update g_opts.mode to reflect the above) */
+	g_opts.mode = mpok ? mp : (g_opts.mode == mt ? mt : sp);
+
 #ifndef h_mingw
-	semw_dtor(g_sync2s);
-out4:
-	semw_dtor(g_nodata);
-out3:
-	semw_dtor(g_nospace);
-out2:
-	mtxw_dtor(g_vars);
-out1:
+	if (g_opts.mode != sp) {
+		if (mtxw_ctor(&g_shm->vars, "/yancat-vars", g_opts.mode == mp) < 0)
+			goto out2;
+		g_vars = &g_shm->vars;
+		if (semw_ctor(&g_shm->nospace, "/yancat-nospace", g_opts.mode == mp, 0) < 0)
+			goto out3;
+		g_nospace = &g_shm->nospace;
+		if (semw_ctor(&g_shm->nodata, "/yancat-nodata", g_opts.mode == mp, 0) < 0)
+			goto out4;
+		g_nodata = &g_shm->nodata;
+	}
 #endif
+
+	buf_setextra(g_buf, g_opts.rline, g_opts.wline, g_opts.rcrc, g_opts.wcrc, g_opts.rsp, g_opts.wsp);
+	buf_report_init(g_buf);
+
+	return 0;
+#ifndef h_mingw
+out4:
+	semw_dtor(g_nospace);
+out3:
+	mtxw_dtor(g_vars);
+out2:
+	buf_dtor(g_buf);
+#endif
+out1:
 	shmw_dtor(&g_chunk);
 	return -1;
 }
 
-static int setup_proc(int mp __attribute__ ((__unused__)))
-{
 #ifndef h_mingw
-	void (*f)(int);
-
-	/* this is common for both processes */
-	if (setup_sigs(sigs_ign, sizeof(sigs_ign)/sizeof(int), SIG_IGN) < 0)
-		goto out;
-	/*
-	 * if buffer returned 1, it means the chunk it allocated is not shared,
-	 * so we can't go multiprocessor mode
-	 */
-	if (mp) {
-		fputs("Continuing with 2 processes.\n", stderr);
-		g_pid = fork();
-		if (g_pid == -1) {
-			perror("fork()");
-			goto out;
-		}
-		if (g_pid) {
-			/* reader/master */
-			f = &sh_rreq_end;
-		} else {
-			/* writer/slave */
-			f = &sh_wreq_end;
-		}
-	} else {
-		fputs("Continuing with 1 process.\n", stderr);
-		f = &sh_rreq_end;
+/*
+ * fork / thread, setup signals, etc.
+ */
+static int forkself(enum role_t role)
+{
+	pid_t pid;
+	pid = fork();
+	if (pid == -1) {
+		perror("fork()");
+		return -1;
 	}
-
-	if (setup_sigs(sigs_end, sizeof(sigs_end)/sizeof(int), f) < 0)
-		goto out;
-	return 0;
-out:
-	if (g_pid) {
-		release_slave();
-	} else {
-		release_master();
-	}
-	return -1;
-#else
-	return 0;
+	if (!pid)
+		g_role = role;
+	return pid;
+}
 #endif
+
+#ifdef h_affi
+static void setup_proc_affinity(pid_t pid, int cpu, const char *tag)
+{
+	cpu_set_t cpus;
+
+	if (cpu < 0)
+		return;
+	CPU_ZERO(&cpus);
+	CPU_SET((size_t)cpu, &cpus);
+	if (sched_setaffinity(pid, sizeof cpus, &cpus) < 0)
+		fprintf(stderr, "WARN: cannot set the affinity of the %s process: %s\n", tag, strerror(errno));
 }
 
-static int setup_winsuck(void)
+static void setup_thread_affinity(pthread_t thr, int cpu, const char *tag)
+{
+	int err;
+	cpu_set_t cpus;
+
+	if (cpu < 0)
+		return;
+	CPU_ZERO(&cpus);
+	CPU_SET((size_t)cpu, &cpus);
+	err = pthread_setaffinity_np(thr, sizeof cpus, &cpus);
+	if (err)
+		fprintf(stderr, "WARN: cannot set the affinity of the %s thread: %s\n", tag, strerror(err));
+}
+#endif
+
+static void *task_reader(void *arg __attribute__ ((__unused__)));
+static void *task_writer(void *arg __attribute__ ((__unused__)));
+// static int setup_proc(int mp __attribute__ ((__unused__)))
+static int setup_proc(void)
+{
+	int ret = 0;
+
+	if (g_opts.mode == sp) {
+		fputs("Continuing with single process.\n", stderr);
+#ifndef h_mingw
+	} else if (g_opts.mode == mp) {
+		pid_t rpid, wpid;
+		fputs("Continuing with 2 processes.\n", stderr);
+		rpid = forkself(reader);
+		if (!rpid)
+			/* we're reader child, nothing to see here */
+			return 0;
+		wpid = forkself(writer);
+		if (!wpid)
+			/* we're writer child, nothing to see here */
+			return 0;
+
+		if (rpid < 0 || wpid < 0)
+			goto out;
+		/* both children forked successfully */
+
+#ifdef h_affi
+		/* affinity if applicable */
+		setup_proc_affinity(rpid, g_opts.cpuR, "reader");
+		setup_proc_affinity(wpid, g_opts.cpuW, "writer");
+#endif
+#ifdef h_thr
+	} else if (g_opts.mode == mt) {
+		fputs("Continuing with 2 threads.\n", stderr);
+		if ((ret = pthread_create(g_threads + reader, NULL, task_reader, "reader thread")))
+			goto out;
+		if ((ret = pthread_create(g_threads + writer, NULL, task_writer, "writer thread")))
+			goto out;
+
+#ifdef h_affi
+		/* affinity if applicable */
+		setup_thread_affinity(g_threads[reader], g_opts.cpuR, "reader");
+		setup_thread_affinity(g_threads[writer], g_opts.cpuW, "writer");
+#endif
+#endif
+#endif
+	}
+
+	return 0;
+
+out:
+	/* arbiter only */
+	release();
+	return -1;
+}
+
+static int setup_winsock(void)
 {
 #ifdef h_mingw
 	WSADATA wsaData;
@@ -309,7 +359,7 @@ static int setup_winsuck(void)
 	return 0;
 }
 
-static int cleanup_winsuck(void)
+static int cleanup_winsock(void)
 {
 #ifdef h_mingw
 	WSACleanup();
@@ -353,10 +403,10 @@ static void cleanup_fds(void)
 
 static void cleanup_env(void)
 {
-	if (g_pid) {
-		cleanup_master();
+	if (g_role == arbiter) {
+		cleanup_arbiter();
 	} else {
-		cleanup_slave();
+		cleanup_child();
 	}
 }
 
@@ -366,8 +416,7 @@ read_i(struct fdpack_s *fd, uint8_t *restrict buf, size_t blk)
 	ssize_t ret;
 	do {
 		ret = fd_read(fd, buf, blk);
-		__cvmb(g_shm->done);
-	} while (unlikely(ret < 0) && errno == EINTR && !g_shm->done);
+	} while (unlikely(ret < 0) && errno == EINTR && !ACCESS_ONCE(g_shm->done));
 	return ret;
 }
 
@@ -377,48 +426,15 @@ write_i(struct fdpack_s *fd, const uint8_t *restrict buf, size_t blk)
 	ssize_t ret;
 	do {
 		ret = fd_write(fd, buf, blk);
-		__cvmb(g_shm->done);
-	} while (unlikely(ret < 0) && errno == EINTR && !g_shm->done);
-	return ret;
-}
-
-static int transfer_summary(void)
-{
-	int i, ret = 0;
-
-	if (!g_pid)
-		return 0;
-
-	fputs("\nTransfer summary:\n ", stderr);
-	for (i = 0; i < errl_cnt ; i++) {
-		if (g_shm->errlog[i]) {
-			fputc(' ', stderr);
-			fputs(errlog_str[i], stderr);
-			ret = -1;
-		}
-	}
-	if (!ret)
-		fputs(" completed cleanly\n", stderr);
-	else
-		fputc('\n', stderr);
-#if 0
-	if (g_shm->done == 1) {
-		fputs("  completed cleanly\n", stderr);
-		ret = 0;
-	} else {
-		fputs("  init/transfer issues and/or signalled\n", stderr);
-		ret = -1;
-	}
-#endif
+	} while (unlikely(ret < 0) && errno == EINTR && !ACCESS_ONCE(g_shm->done));
 	return ret;
 }
 
 /* reader process */
-static void transfer_master(void)
+static void transfer_reader(void)
 {
 #ifndef h_mingw
 	uint8_t *ptrr;
-	int errR = 0;
 	ssize_t retr = 1;
 	size_t siz;
 
@@ -445,7 +461,7 @@ static void transfer_master(void)
 		retr = read_i(&g_fdi, ptrr, siz);
 		if unlikely(retr <= 0) {
 			if (retr < 0)
-				errR = errno;
+				g_shm->errR = errno;
 			goto outt;
 		}
 		buf_commit_r(g_buf, retr);
@@ -471,18 +487,15 @@ outt:
 	 * also see relevant comments in slave
 	 */
 	if (retr < 0) {
-		g_shm->errlog[errl_mt] = 1;
+		g_shm->errlog[8 + g_role] = 1;
 		g_shm->done = 2;
 	} else if (retr == 0)
-		__cmpxchg(g_shm->done, 0, 1);
+		cmpxchg(g_shm->done, 0, 1);
 	Vb(g_nodata);
-	Pb(g_sync2s);
-	if (retr < 0)
-		fprintf(stderr, "\nread()/recv(): %s\n", strerror(errR));
 #endif
 }
 
-static ssize_t transfer_slave_epi(int *errW)
+static ssize_t transfer_writer_epi(void)
 {
 	uint8_t *ptrw;
 	ssize_t retw = 1;
@@ -493,7 +506,7 @@ static ssize_t transfer_slave_epi(int *errW)
 		if (unlikely(siz < g_opts.wblk) && g_opts.strict) {
 			ptrw = buf_fetch_w(g_buf, g_opts.wblk);
 			pad = g_opts.wblk - siz;
-			fprintf (stderr, "\nWriter: padding with %zu 0s\n", pad);
+			fprintf (stderr, "\nINFO: strict mode writer padded with %zu 0s\n", pad);
 			/*
 			 * this is safe - buffer always has more than
 			 * 2*max(wblk,rblk), and we're not reading anymore
@@ -505,7 +518,7 @@ static ssize_t transfer_slave_epi(int *errW)
 		}
 		retw = write_i(&g_fdo, ptrw, siz + pad);
 		if unlikely(retw < 0) {
-			*errW = errno;
+			g_shm->errW = errno;
 			break;
 		}
 		if unlikely((size_t)retw > siz) {
@@ -521,11 +534,10 @@ static ssize_t transfer_slave_epi(int *errW)
 	return retw;
 }
 
-static void transfer_slave(void)
+static void transfer_writer(void)
 {
 #ifndef h_mingw
 	uint8_t *ptrw;
-	int errW = 0;
 	ssize_t retw = 1;
 	size_t siz;
 
@@ -546,11 +558,11 @@ static void transfer_slave(void)
 		ptrw = buf_fetch_w(g_buf, siz);
 		retw = write_i(&g_fdo, ptrw, siz);
 		if unlikely(retw < 0) {
-			errW = errno;
+			g_shm->errW = errno;
 			goto outt;
 		}
 		if (unlikely((size_t)retw < g_opts.wblk) && g_opts.strict)
-			fprintf (stderr, "warning, strict mode writer wrote %zd instead of %zu\n", retw, g_opts.wblk);
+			fprintf(stderr, "WARN: strict mode writer wrote %zd instead of %zu\n", retw, g_opts.wblk);
 		buf_commit_w(g_buf, retw);
 		Pm(g_vars);
 		buf_commit_wf(g_buf, retw);
@@ -568,13 +580,13 @@ outt:
 	 * set 'done' only in the latter case
 	 */
 	if unlikely(retw < 0) {
-		g_shm->errlog[errl_st] = 1;
+		g_shm->errlog[8 + g_role] = 1;
 		g_shm->done = 2;
 	}
 	Vb(g_nospace);
 
 	/*
-	 * epilogue may be run only if master is outside its reading loop;
+	 * epilogue may be run only if reader is outside its reading loop;
 	 * it's important because we don't use any locking in epilogue, and
 	 * we also pad 0s in strict reblocking mode /into/ fetched buffer;
 	 *
@@ -584,32 +596,28 @@ outt:
 	 * though)
 	 */
 	if (g_shm->done == 1)
-		retw = transfer_slave_epi(&errW);
+		retw = transfer_writer_epi();
 /* oute: */
 	if (retw < 0) {
-		g_shm->errlog[errl_st] = 1;
-		fprintf (stderr, "\nwrite()/send(): %s\n", strerror(errW));
+		g_shm->errlog[8 + g_role] = 1;
 	}
-	/* signal reader we're done with writing */
-	Vb(g_sync2s);
 #endif
 }
 
 static void transfer_1cpu(void)
 {
 	uint8_t *ptrr, *ptrw;
-	int errR = 0, errW = 0;
 	ssize_t retr = 1, retw = 0;
 	size_t siz, cnt;
 
-	while likely(!g_shm->done) {
+	while likely(!ACCESS_ONCE(g_shm->done)) {
 		cnt = g_opts.rcnt;
 		while likely((siz = buf_can_r(g_buf)) && cnt--) {
 			ptrr = buf_fetch_r(g_buf, siz);
 			retr = read_i(&g_fdi, ptrr, siz);
 			if unlikely(retr <= 0) {
 				if (retr < 0)
-					errR = errno;
+					g_shm->errR = errno;
 				goto outt;
 			}
 			buf_commit_r(g_buf, retr);
@@ -620,142 +628,135 @@ static void transfer_1cpu(void)
 			ptrw = buf_fetch_w(g_buf, siz);
 			retw = write_i(&g_fdo, ptrw, siz);
 			if unlikely(retw < 0) {
-				errW = errno;
+				g_shm->errW = errno;
 				goto outt;
 			}
 			buf_commit_w(g_buf, retw);
 			buf_commit_wf(g_buf, retw);
 			if (unlikely((size_t)retw < g_opts.wblk) && g_opts.strict)
-				fprintf(stderr, "warning, strict mode writer wrote %zd instead of %zu\n", retw, g_opts.wblk);
+				fprintf(stderr, "WARN: strict mode writer wrote %zd instead of %zu\n", retw, g_opts.wblk);
 		}
-		__cvmb(g_shm->done);
 	}
 outt:
 	if (retw >= 0)
-		retw = transfer_slave_epi(&errW);
+		retw = transfer_writer_epi();
 /* oute: */
 
 	if (retr < 0 || retw < 0) {
-		g_shm->errlog[errl_mt] = 1;
-		fputc('\n', stderr);
-		if (retr < 0)
-			fprintf(stderr, "read()/recv(): %s\n", strerror(errR));
-		if (retw < 0)
-			fprintf(stderr, "write()/send(): %s\n", strerror(errW));
+		g_shm->errlog[8 + g_role] = 1;
 	}
 }
 
-void setaffi(int cpu __attribute__ ((__unused__)),
-	     const char *tag __attribute__ ((__unused__)))
+/* note: fd cleanup is performed outside */
+static void *task_writer(void *arg __attribute__ ((__unused__)))
 {
-#ifdef h_affi
-	static const char *warn = "affinity: %s: %s\n";
-	cpu_set_t cpus;
-	int ret;
-
-	if (cpu < 0)
-		return;
-
-	CPU_ZERO(&cpus);
-	CPU_SET((size_t)cpu, &cpus);
-# ifdef h_thr
-	ret = pthread_setaffinity_np(pthread_self(), sizeof cpus, &cpus);
-# else
-	ret = 0;
-	if (sched_setaffinity(getpid(), sizeof cpus, &cpus) < 0)
-		ret = errno;
-# endif
-	if (ret != 0)
-		fprintf(stderr, warn, tag, strerror(ret));
-#endif
-}
-
-static void *main_slave(void *arg)
-{
-	const char *tag = arg;
+	g_role = writer;
 	if (fd_open(&g_fdo) < 0) {
-		release_master();
+		release();
 		return NULL;
 	}
-
-	setaffi(g_opts.cpuS, tag);
-	transfer_slave();
+	transfer_writer();
 	return NULL;
 }
 
-void main_master(int forked)
+static void *task_reader(void *arg __attribute__ ((__unused__)))
 {
-	buf_report_init(g_buf);
+	g_role = reader;
+	if (fd_open(&g_fdi) < 0) {
+		release();
+		return NULL;
+	}
+	transfer_reader();
+	return NULL;
+}
+
+static void *task_single(void *arg __attribute__ ((__unused__)))
+{
+	/* role remains arbiter */
+	if (fd_open(&g_fdi) < 0)
+		goto out;
+	if (fd_open(&g_fdo) < 0)
+		goto out;
+
+	transfer_1cpu();
+	return NULL;
+out:
+	release();
+	return NULL;
+}
+
+static int reaper(void)
+{
+	int i, ret = 0;
+
+#ifndef h_mingw
+	if (g_opts.mode == mp) {
+		waitpid(0, NULL, 0);
+#ifdef h_thr
+	} else if (g_opts.mode == mt) {
+		for (i = 0; i < sizeof g_threads / sizeof g_threads[0]; i++)
+			if (g_threads[i])
+				pthread_join(g_threads[i], NULL);
+#endif
+	}
+#endif
+	fputs("\nTransfer events:\n ", stderr);
+	for (i = 0; i < ERRL_CNT; i++) {
+		if (g_shm->errlog[i]) {
+			fputc(' ', stderr);
+			fputs(errlog_str[i], stderr);
+			ret = -1;
+		}
+	}
+	if (!ret)
+		fputs(" none, everything completed cleanly", stderr);
+	fputc('\n', stderr);
+	if (g_shm->errR)
+		fprintf(stderr, "read()/recv(): %s\n", strerror(g_shm->errR));
+	if (g_shm->errW)
+		fprintf(stderr, "write()/send(): %s\n", strerror(g_shm->errW));
+	fputc('\n', stderr);
+	buf_report_stats(g_buf);
 	fputc('\n', stderr);
 
-	if (fd_open(&g_fdi) < 0) {
-		release_slave();
-		return;
-	}
-
-	if (!forked) {
-#ifdef h_thr
-		if (g_opts.thread) {
-			int ret;
-			pthread_t thr;
-			fputs("Continuing with 2 threads.\n", stderr);
-			if ((ret = pthread_create(&thr, NULL, main_slave, "slave thread"))) {
-				fprintf(stderr, "pthread_create(): %s\n", strerror(ret));
-				return;
-			}
-			setaffi(g_opts.cpuM, "master thread");
-			transfer_master();
-			pthread_join(thr, NULL);
-		}
-		else
-#endif
-		{
-			if (fd_open(&g_fdo) < 0)
-				return;
-			transfer_1cpu();
-		}
-	} else {
-		setaffi(g_opts.cpuM, "master process");
-		transfer_master();
-	}
-
-	buf_report_stats(g_buf);
+	return ret;
 }
 
 int main(int argc, char **argv)
 {
-	int mp, ret = -1;
+	int ret = -1;
 
 	if (common_init() < 0)
 		goto out1;
 	if (opt_parse(&g_opts, argc, argv) < 0)
 		goto out1;
-	if (setup_winsuck() < 0)
+	if (setup_winsock() < 0)
 		goto out1;
 	do {
 		if ((ret = setup_fds()) < 0)
 			goto out2;
-		if ((mp = ret = setup_env()) < 0)
+		if ((ret = setup_env()) < 0)
 			goto out3;
-		if ((ret = setup_proc(mp)) < 0)
+		if ((ret = setup_proc()) < 0)
 			goto out4;
-		/* one or two processes from here on */
-		if (g_pid) {
-			main_master(mp);
-		} else
-			main_slave("slave process");
-#ifndef h_mingw
-		waitpid(0, NULL, 0);
-#endif
-		ret = transfer_summary();
+		
+		if (g_role == reader)
+			task_reader("reader process");
+		else if (g_role == writer)
+			task_writer("writer process");
+		else if (g_opts.mode == sp) /* implied arbiter */
+			task_single("1cpu process");
+
+		if (g_role == arbiter)
+			ret = reaper();
 out4:
 		cleanup_env();
 out3:
 		cleanup_fds();
-	} while (g_opts.loop && ret >= 0 && g_pid);
+	} while (g_opts.loop && ret >= 0 && g_role == arbiter);
 out2:
-	cleanup_winsuck();
+	cleanup_winsock();
 out1:
-	fflush(stderr);
+	fflush(stderr);	/* this is mingwizm, otherwise it cuts out buffered output in console for w/e reasons ... */
 	return ret;
 }
