@@ -133,13 +133,13 @@ int buf_ctor(struct buf_s *buf, size_t bsiz, size_t rblk, size_t wblk, size_t hp
 	}
 
 	if (!buf->iscir) {
-		csiz = _YALIGN(rblk, page) + _YALIGN(wblk, page);
+		csiz = Y_ALIGN(rblk, page) + Y_ALIGN(wblk, page);
 		if (shmw_ctor(&buf->scr, "/yancat-bounce-area", &csiz, 0, 0, 0) < 0) {
 			fputs("buf: failed to allocate shared memory bounce area\n", stderr);
 			goto out;
 		}
 		buf->rchunk = shmw_ptr(&buf->scr);
-		buf->wchunk = buf->rchunk + _YALIGN(rblk, page);
+		buf->wchunk = buf->rchunk + Y_ALIGN(rblk, page);
 	}
 
 	buf->rblk = rblk;
@@ -150,7 +150,7 @@ out:
 	return -1;
 }
 
-void __buf_commit_rbounce(struct buf_s *restrict buf, size_t chunk)
+void ibuf_commit_rbounce(struct buf_s *restrict buf, size_t chunk)
 {
 	size_t siz1, siz2;
 
@@ -171,7 +171,7 @@ void __buf_commit_rbounce(struct buf_s *restrict buf, size_t chunk)
 		buf->rcrc = crc_calc(buf->rcrc, buf->rchunk, chunk);
 }
 
-uint8_t *__buf_fetch_wbounce(struct buf_s *restrict buf, size_t chunk)
+uint8_t *ibuf_fetch_wbounce(struct buf_s *restrict buf, size_t chunk)
 {
 	size_t siz1, siz2;
 

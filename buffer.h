@@ -42,8 +42,8 @@ struct buf_s {
 	CRCINT rcrc, wcrc;
 };
 
-void __buf_commit_rbounce(struct buf_s *restrict buf, size_t chunk);
-uint8_t * __buf_fetch_wbounce(struct buf_s * restrict buf, size_t chunk);
+void ibuf_commit_rbounce(struct buf_s *restrict buf, size_t chunk);
+uint8_t * ibuf_fetch_wbounce(struct buf_s * restrict buf, size_t chunk);
 
 static inline uint8_t *
 buf_fetch_r(struct buf_s *restrict buf, size_t chunk)
@@ -69,7 +69,7 @@ buf_commit_r(struct buf_s *restrict buf, size_t chunk)
 		if unlikely(buf->dorcrc)
 			buf->rcrc = crc_calc(buf->rcrc, buf->ptr + buf->got, chunk);
 	} else
-		__buf_commit_rbounce(buf, chunk);
+		ibuf_commit_rbounce(buf, chunk);
 }
 
 static inline uint8_t *
@@ -83,7 +83,7 @@ buf_fetch_w(struct buf_s * restrict buf, size_t chunk)
 		buf->fastw = 1;
 		return buf->ptr + buf->did;
 	} else
-		return __buf_fetch_wbounce(buf, chunk);
+		return ibuf_fetch_wbounce(buf, chunk);
 }
 
 static inline void

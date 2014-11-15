@@ -90,7 +90,7 @@ all: yancat
 options.c: version.h
 
 version.h:
-	echo "#define __YANVER \""$(YANVER)"\"" >$@
+	echo "#define YANVER \""$(YANVER)"\"" >$@
 
 yancat: $(OBJS)
 	$(CC) $(LDFLAGS) -o $@ $^ $(LIBS)

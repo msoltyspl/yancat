@@ -103,7 +103,7 @@ int shmw_ctor(struct shm_s *s, const char *name, size_t *_siz, size_t huge, int 
 	}
 #endif
 
-	siz = _YALIGN(*_siz, _YMAX(page, (size_t)SHMLBA));
+	siz = Y_ALIGN(*_siz, Y_MAX(page, (size_t)SHMLBA));
 #if 0
 	/* this is far from perfect, but ... */
 	key = (key_t)((crc_str(name) & ~0xFFFFu) | (rand() & 0xFFFFu));

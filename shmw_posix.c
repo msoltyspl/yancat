@@ -170,7 +170,7 @@ int shmw_ctor(struct shm_s *s, const char *name, size_t *_siz, size_t huge, int 
 	}
 	if (!s->name)
 		return -1;
-	siz = _YALIGN(*_siz, page);
+	siz = Y_ALIGN(*_siz, page);
 	s->siz = siz;
 
 	if (s->ishuge)

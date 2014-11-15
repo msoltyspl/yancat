@@ -74,7 +74,7 @@ static void help(void)
 	fprintf(stderr,
 		"\n"
 		"Yancat\n"
-		__YANVER "\n"
+		YANVER "\n"
 		"(c) 2012 Michal Soltys\n"
 		"\n"
 		"	-i <spec>	input fd specification\n"
@@ -302,7 +302,7 @@ int opt_parse(struct options_s *opts, int argc, char **argv)
 		goto out;
 	}
 
-	blk = _YMAX(opts->rblk, opts->wblk);
+	blk = Y_MAX(opts->rblk, opts->wblk);
 	opts->rsp = (size_t)(0.5 + rs*(double)opts->bsiz);
 	opts->wsp = (size_t)(0.5 + ws*(double)opts->bsiz);
 

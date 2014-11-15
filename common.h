@@ -31,10 +31,10 @@
 
 #define cmpxchg(x,o,n) __sync_bool_compare_and_swap(&(x),(o),(n));
 
-#define _YMAX(x,y) ((x) > (y) ? (x) : (y))
-#define _YMIN(x,y) ((x) < (y) ? (x) : (y))
-#define _YALIGN(x, a) (((uintptr_t)(x) + a - 1) & ~((uintptr_t)(a) - 1))
-#define _YISALI(x, a) (((uintptr_t)(x) & ~((uintptr_t)(a) - 1)) == 0)
+#define Y_MAX(x,y) ((x) > (y) ? (x) : (y))
+#define Y_MIN(x,y) ((x) < (y) ? (x) : (y))
+#define Y_ALIGN(x, a) (((uintptr_t)(x) + a - 1) & ~((uintptr_t)(a) - 1))
+#define Y_ISALI(x, a) (((uintptr_t)(x) & ~((uintptr_t)(a) - 1)) == 0)
 
 // hmmm ...
 #if PROFILE > 0
