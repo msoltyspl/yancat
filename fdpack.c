@@ -69,9 +69,10 @@ static void fd_info_s(struct fdpack_s*);
 static int fd_open_(struct fdpack_s*);
 static int fd_open_f(struct fdpack_s*);
 static int fd_open_s(struct fdpack_s*);
+static int fd_close_(struct fdpack_s*);
+static int fd_close_s(struct fdpack_s*);
 static int fd_dtor_(struct fdpack_s*);
 static int fd_dtor_f(struct fdpack_s*);
-static int fd_dtor_s(struct fdpack_s*);
 static ssize_t fd_read_(struct fdpack_s *, void *, size_t);
 static ssize_t fd_read_s(struct fdpack_s *, void *, size_t);
 static ssize_t fd_write_(struct fdpack_s *, const void *, size_t);
@@ -81,6 +82,7 @@ const struct fdtype_s _fdfd = {
 		.kind = "fd",
 		.dtor = &fd_dtor_,
 		.open = &fd_open_,
+		.close = &fd_close_,
 		.read = &fd_read_,
 		.write = &fd_write_,
 		.info = &fd_info_,
@@ -89,6 +91,7 @@ const struct fdtype_s _fdfile = {
 		.kind = "file",
 		.dtor = &fd_dtor_f,
 		.open = &fd_open_f,
+		.close = &fd_close_,
 		.read = &fd_read_,
 		.write = &fd_write_,
 		.info = &fd_info_f,
@@ -96,8 +99,9 @@ const struct fdtype_s _fdfile = {
 
 const struct fdtype_s _fdsock = {
 		.kind = "socket",
-		.dtor = &fd_dtor_s,
+		.dtor = &fd_dtor_,
 		.open = &fd_open_s,
+		.close = &fd_close_s,
 		.read = &fd_read_s,
 		.write = &fd_write_s,
 		.info = &fd_info_s,
@@ -156,7 +160,7 @@ fd_info_s(struct fdpack_s *fd)
 }
 
 static int
-fd_dtor_(struct fdpack_s *fd)
+fd_close_(struct fdpack_s *fd)
 {
 	int ret = -1;
 	if (fd->fd >= 0) {
@@ -174,17 +178,7 @@ fd_dtor_(struct fdpack_s *fd)
 }
 
 static int
-fd_dtor_f(struct fdpack_s *fd)
-{
-	int ret = fd_dtor_(fd);
-	if (fd->f.path)
-		free(fd->f.path);
-	fd->f.path = NULL;
-	return ret;
-}
-
-static int
-fd_dtor_s(struct fdpack_s *fd)
+fd_close_s(struct fdpack_s *fd)
 {
 	int ret = -1;
 	if (fd->fd >= 0) {
@@ -205,6 +199,23 @@ fd_dtor_s(struct fdpack_s *fd)
 	fd->fd = -1;
 	return ret;
 }
+
+static int
+fd_dtor_(struct fdpack_s *fd)
+{
+	return fd_close(fd);
+}
+
+static int
+fd_dtor_f(struct fdpack_s *fd)
+{
+	if (fd->f.path)
+		free(fd->f.path);
+	fd->f.path = NULL;
+	return fd_dtor_(fd);
+}
+
+/* TODO socket can keep listening fd (on input side) and fd_dtor_s could tear it down */
 
 static ssize_t
 fd_read_(struct fdpack_s *fd, void *buf, size_t count)
@@ -231,7 +242,7 @@ fd_write_s(struct fdpack_s *fd, const void *buf, size_t count)
 }
 
 static int
-fd_open_(struct fdpack_s* fd __attribute__ ((__unused__)))
+fd_open_(struct fdpack_s* fd)
 {
 	/* note: direct file descriptor can't be reopened */
 	if (!fd || fd->fd < 0)
@@ -242,7 +253,7 @@ fd_open_(struct fdpack_s* fd __attribute__ ((__unused__)))
 static int
 fd_open_f(struct fdpack_s* fd)
 {
-	int mode, flags, fdo;
+	int mode, flags, ret = -1;
 
 	if (!fd)
 		goto out;
@@ -255,23 +266,23 @@ fd_open_f(struct fdpack_s* fd)
 	}
 	mode |= _O_BINARY | O_LARGEFILE;
 
-	fdo = open(fd->f.path, mode, flags);
-	if (fdo < 0) {
+	ret = open(fd->f.path, mode, flags);
+	if (ret < 0) {
 		perror("open()");
 		goto out;
 	}
 
-	fd->fd = fdo;
-	return 0;
+	fd->fd = ret;
+	ret = 0;
 out:
-	return -1;
+	return ret;
 }
 
 static int
 fd_open_s(struct fdpack_s* fd)
 {
 	struct sockaddr addr_store;
-	int ret;
+	int ret = -1;
 
 	if (!fd)
 		goto out;
@@ -296,9 +307,9 @@ fd_open_s(struct fdpack_s* fd)
 		close(fd->fd);
 		fd->fd = ret;
 	}
-	return 0;
+	ret = 0;
 out:
-	return -1;
+	return ret;
 }
 
 /*

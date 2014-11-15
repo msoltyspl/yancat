@@ -34,6 +34,7 @@ struct fdtype_s {
 	const char *kind;
 	void (*info)(struct fdpack_s *);
 	int (*open)(struct fdpack_s*);
+	int (*close)(struct fdpack_s*);
 	int (*dtor)(struct fdpack_s*);
 	ssize_t (*read)(struct fdpack_s *, void *, size_t);
 	ssize_t (*write)(struct fdpack_s *, const void *, size_t);
@@ -96,6 +97,12 @@ static inline int
 fd_open(struct fdpack_s *fd)
 {
 	return fd->type->open(fd);
+}
+
+static inline int
+fd_close(struct fdpack_s *fd)
+{
+	return fd->type->close(fd);
 }
 
 static inline int
