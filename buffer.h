@@ -45,6 +45,10 @@ struct buf_s {
 void ibuf_commit_rbounce(struct buf_s *restrict buf, size_t chunk);
 uint8_t * ibuf_fetch_wbounce(struct buf_s * restrict buf, size_t chunk);
 
+/*
+ * on mingw we support only subset of full functionality - among those there's
+ * no possibility for circular buffer; OTOH on any unix it's almost guaranteed
+ */
 static inline uint8_t *
 buf_fetch_r(struct buf_s *restrict buf, size_t chunk)
 {
@@ -61,17 +65,7 @@ buf_fetch_r(struct buf_s *restrict buf, size_t chunk)
 	}
 }
 
-static inline void
-buf_commit_r(struct buf_s *restrict buf, size_t chunk)
-{
-	buf->allin += chunk;
-	if likely(buf->fastr) {
-		if unlikely(buf->dorcrc)
-			buf->rcrc = crc_calc(buf->rcrc, buf->ptr + buf->got, chunk);
-	} else
-		ibuf_commit_rbounce(buf, chunk);
-}
-
+/* see comment above */
 static inline uint8_t *
 buf_fetch_w(struct buf_s * restrict buf, size_t chunk)
 {
@@ -87,6 +81,17 @@ buf_fetch_w(struct buf_s * restrict buf, size_t chunk)
 }
 
 static inline void
+buf_commit_r(struct buf_s *restrict buf, size_t chunk)
+{
+	buf->allin += chunk;
+	if likely(buf->fastr) {
+		if unlikely(buf->dorcrc)
+			buf->rcrc = crc_calc(buf->rcrc, buf->ptr + buf->got, chunk);
+	} else
+		ibuf_commit_rbounce(buf, chunk);
+}
+
+static inline void
 buf_commit_w(struct buf_s * restrict buf, size_t chunk)
 {
 	buf->allout += chunk;
@@ -98,7 +103,11 @@ buf_commit_w(struct buf_s * restrict buf, size_t chunk)
 		}
 	}
 }
-
+/*
+ * commit functions are split into r/rf and w/wf, because .f versions
+ * modify values and we have no guarantees about atomicity - at the same time
+ * funcions making decisions (buf_can_r/w) would be reading those values
+ */
 static inline void
 buf_commit_rf(struct buf_s *restrict buf, size_t chunk)
 {

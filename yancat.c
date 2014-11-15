@@ -254,6 +254,7 @@ static int forkself(enum role_t role)
 		perror("fork()");
 		return -1;
 	}
+	/* we set role right after fork, so the processes know what to do in mp scenario */
 	if (!pid)
 		g_role = role;
 	return pid;
@@ -464,6 +465,7 @@ static void transfer_reader(void)
 				g_shm->errR = errno;
 			goto outt;
 		}
+		/* see comments in buffer files about the split */
 		buf_commit_r(g_buf, retr);
 		Pm(g_vars);
 		buf_commit_rf(g_buf, retr);
@@ -563,6 +565,7 @@ static void transfer_writer(void)
 		}
 		if (unlikely((size_t)retw < g_opts.wblk) && g_opts.strict)
 			fprintf(stderr, "WARN: strict mode writer wrote %zd instead of %zu\n", retw, g_opts.wblk);
+		/* see comments in buffer files about the split */
 		buf_commit_w(g_buf, retw);
 		Pm(g_vars);
 		buf_commit_wf(g_buf, retw);
@@ -687,7 +690,8 @@ out:
 
 static int reaper(void)
 {
-	int i, ret = 0;
+	unsigned int i;
+	int ret = 0;
 
 #ifndef h_mingw
 	if (g_opts.mode == mp) {
