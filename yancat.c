@@ -650,42 +650,54 @@ outt:
 	}
 }
 
-/* note: fd cleanup is performed outside */
-static void *task_writer(void *arg __attribute__ ((__unused__)))
-{
-	g_role = writer;
-	if (fd_open(&g_fdo) < 0) {
-		release();
-		return NULL;
-	}
-	transfer_writer();
-	return NULL;
-}
-
 static void *task_reader(void *arg __attribute__ ((__unused__)))
 {
+	int ret = -1;
 	g_role = reader;
-	if (fd_open(&g_fdi) < 0) {
-		release();
-		return NULL;
-	}
+	if (fd_open(&g_fdi) < 0)
+		goto out;
 	transfer_reader();
+	ret = 0;
+	fd_close(&g_fdi);
+out:
+	if (ret < 0)
+		release();
 	return NULL;
 }
 
-static void *task_single(void *arg __attribute__ ((__unused__)))
+static void *task_writer(void *arg __attribute__ ((__unused__)))
 {
-	/* role remains arbiter */
-	if (fd_open(&g_fdi) < 0)
-		goto out;
+	int ret = -1;
+	g_role = writer;
 	if (fd_open(&g_fdo) < 0)
 		goto out;
+	transfer_writer();
+	ret = 0;
+	fd_close(&g_fdo);
+out:
+	if (ret < 0)
+		release();
+	return NULL;
+}
+
+static void task_single(void)
+{
+	int ret = -1;
+	/* role remains arbiter */
+	if (fd_open(&g_fdi) < 0)
+		goto out1;
+	if (fd_open(&g_fdo) < 0)
+		goto out2;
 
 	transfer_1cpu();
-	return NULL;
-out:
-	release();
-	return NULL;
+	ret = 0;
+	fd_close(&g_fdo);
+out2:
+	fd_close(&g_fdi);
+out1:
+	if (ret < 0)
+		release();
+	return;
 }
 
 static int reaper(void)
@@ -745,11 +757,11 @@ int main(int argc, char **argv)
 			goto out4;
 		
 		if (g_role == reader)
-			task_reader("reader process");
+			task_reader(0);
 		else if (g_role == writer)
-			task_writer("writer process");
+			task_writer(0);
 		else if (g_opts.mode == sp) /* implied arbiter */
-			task_single("1cpu process");
+			task_single();
 
 		if (g_role == arbiter)
 			ret = reaper();
