@@ -58,17 +58,17 @@ int shmw_ctor(struct shm_s *s, const char *name, size_t *_siz, size_t huge, int 
 	memset(s, 0, sizeof *s);
 
 	page = get_page();
+	siz = Y_ALIGN(*_siz, page);
 
-	siz = *_siz + page;
-	addr = (uint8_t *)malloc(siz);
+	addr = (uint8_t *)malloc(siz + page);
 	if (!addr) {
 		fprintf(stderr, "error: malloc \"shm\" '%s' failure\n", name);
 		return -1;
 	}
 	s->addr = addr;
-	s->ptr = (uint8_t *)_YALIGN(addr, page);
+	s->ptr = (uint8_t *)Y_ALIGN(addr, page);
 
-	/* no *_siz update here */
+	*_siz = siz;
 	return 1; /* non-shared allocators (e.g. malloc) return 1 */
 }
 
