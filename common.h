@@ -60,6 +60,7 @@ void get_strrnd(char *restrict s, int len);
 size_t get_page(void);
 size_t get_pathmax(const char *ptr);
 int common_init(void);
+// void strerror_rw(int e, char *buf, size_t s);
 
 extern const char err_generic[];
 

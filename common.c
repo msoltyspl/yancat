@@ -22,6 +22,7 @@
 #include <limits.h>
 #include <errno.h>
 #include <time.h>
+// #include <string.h>
 
 #include "crc.h"
 
@@ -151,6 +152,29 @@ int common_init(void)
 	srand ((unsigned int)time(0));
 	return 0;
 }
+
+/* strerror_r wrapper to cover its possible error (XSI only) */
+/*
+void strerror_rw(int e, char *buf, size_t s)
+{
+	char ext[256];
+	size_t len;
+	int ret;
+	if ((ret = strerror_r(e, buf, s)) < 0) {
+		switch (ret) {
+			case EINVAL:
+				strcpy(ext, "[strerror_r(): invalid errno value]"); break;
+			case ERANGE:
+				strcpy(ext, "[strerror_r(): not enough space in buffer to describe error]"); break;
+			default:
+				strcpy(ext, "[strerror_r(): wtf ?]");
+		}
+		len = Y_MIN(s, strlen(ext) + 1);
+		memcpy(buf, ext, len);
+		buf[len - 1] = 0;
+	}
+}
+*/
 
 #if 0
 int get_ul(size_t *v, const char *s)
