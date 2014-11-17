@@ -49,7 +49,7 @@ struct fdpack_s {
 		} f;
 		struct {
 			struct sockaddr_in saddr;
-			struct netpnt_s info;
+			struct netpnt_s np;
 			int flags;
 		} s;
 	};
