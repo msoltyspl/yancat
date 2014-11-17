@@ -19,7 +19,9 @@
 #ifndef __common_h__
 #define __common_h__
 
+#include "config.h"
 #include <stdint.h>
+#include <unistd.h>
 
 /*
  * in order: cpu+comp barrier, comp barrier, variable barrier
@@ -45,10 +47,18 @@
 # define unlikely(x)    (__builtin_expect(!!(x), 0))
 #endif
 
+#ifdef h_mingw
+# define TFR(x) x
+#else
+# define TFR(x) TEMP_FAILURE_RETRY(x)
+#endif
+
 #if DEBUG == 1
 # define DEB(...) fprintf(stderr, __VA_ARGS__)
+# define DEBL(x, y) write(2, x, y)
 #else
 # define DEB(...) ((void)(0))
+# define DEBL(...) ((void)(0))
 #endif
 
 #define ERRG(x) fprintf(stderr, err_generic, (x), __FILE__, __LINE__)
