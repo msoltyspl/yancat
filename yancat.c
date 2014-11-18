@@ -54,13 +54,14 @@
 #include "buffer.h"
 
 enum role_t {arbiter = 0, reader, writer, crcer, sigrelay};
+#define TASK_CNT 5
 
 static struct options_s g_opts;
 static struct fdpack_s g_fdi, g_fdo;
 
 /* crc not implemented yet as a separate thread */
 #ifdef h_thr
-static pthread_t g_threads[5] = {0};
+static pthread_t g_threads[TASK_CNT];
 static __thread enum role_t g_role = arbiter;
 #else
 static enum role_t g_role = arbiter;
@@ -86,6 +87,7 @@ static struct shr_s {
 	sig_atomic_t done, mwait, swait;
 	sig_atomic_t errlog[ERRL_CNT];
 #ifndef h_mingw
+	pid_t pids[TASK_CNT];
 	struct mtx_s vars;
 	struct sem_s nospace, nodata;
 #endif
@@ -103,8 +105,8 @@ static int sigs_hnd[] = { SIGTERM, SIGINT, SIGUSR1, 0 };
 static int sigs_hnd_t[] = { SIGTERM, SIGINT, 0 };
 static int sigs_unb_t[] = { SIGUSR1, SIGTSTP, 0 };
 
-static pid_t g_pids[5] = {0};
-static pid_t g_pgroup = 0;
+//static pid_t g_pids[TASK_CNT];
+//static pid_t g_pgroup;
 
 #endif
 
@@ -124,18 +126,16 @@ static void notify_tasks(void)
 	size_t i;
 #ifndef h_mingw
 	if (g_opts.mode == mp) {
-		kill(-g_pgroup, SIGUSR1);
-		/*
+//		kill(-g_pgroup, SIGUSR1);
 		pid_t p = getpid();
-		for (i = 0; i < sizeof g_pids / sizeof g_pids[0]; i++) {
-			if (g_pids[i] > 0 && g_pids[i] != p)
-				kill(g_pids[i], SIGUSR1);
+		for (i = 0; i < TASK_CNT; i++) {
+			if (g_shm->pids[i] > 0 && g_shm->pids[i] != p)
+				kill(g_shm->pids[i], SIGUSR1);
 		}
-		*/
 #ifdef h_thr
 	} else if (g_opts.mode == mt) {
 		pthread_t t = pthread_self();
-		for (i = 0; i < sizeof g_threads / sizeof g_threads[0]; i++) {
+		for (i = 0; i < TASK_CNT; i++) {
 			if (g_threads[i] > 0 && g_threads[i] != t) {
 				DEB(stderr, "ping: %lu -> %lu\n", t, g_threads[i]);
 				pthread_kill(g_threads[i], SIGUSR1);
@@ -327,8 +327,8 @@ static int forkself(enum role_t role)
 	/* we set role right after fork, so the processes know what to do in mp scenario */
 	if (!pid)
 		g_role = role;
-/*	else
-		g_pids[role] = pid;*/
+	else
+		g_shm->pids[role] = pid;
 	return pid;
 }
 #endif
@@ -361,14 +361,9 @@ static void setup_thread_affinity(pthread_t thr, int cpu, const char *tag)
 }
 #endif
 
-/*		if ((p = forkself(reader)) < 0) goto out;
-		if (!p) return 0;
-		if ((p = forkself(writer)) < 0) goto out;
-		if (!p) return 0;*/
 static void *task_sigrelay(void *arg __attribute__ ((__unused__)));
 static void *task_reader(void *arg __attribute__ ((__unused__)));
 static void *task_writer(void *arg __attribute__ ((__unused__)));
-// static int setup_proc(int mp __attribute__ ((__unused__)))
 static int setup_proc(void)
 {
 	int ret = 0;
@@ -377,21 +372,18 @@ static int setup_proc(void)
 		fputs("Continuing with single process.\n", stderr);
 #ifndef h_mingw
 	} else if (g_opts.mode == mp) {
-		pid_t pr, pw;
-		g_pgroup = getpgrp();
+		pid_t p;
+		//g_pgroup = getpgrp();
 		fputs("Continuing with 2 processes.\n", stderr);
-		if (!(pr = forkself(reader))) return 0;
-		if (!(pw = forkself(writer))) return 0;
-		/* store pids after all forks to not pollute children with
-		 * partial data (though they don't use it) */
-		g_pids[reader] = pr; g_pids[writer] = pw;
-		if (pr < 0 || pw < 0 )
-			goto outp;
+		if ((p = forkself(reader)) < 0) goto outp;
+		if (!p) return 0;
+		if ((p = forkself(writer)) < 0) goto outp;
+		if (!p) return 0;
 		/* both children forked successfully */
 #ifdef h_affi
 		/* affinity if applicable */
-		setup_proc_affinity(g_pids[reader], g_opts.cpuR, "reader");
-		setup_proc_affinity(g_pids[writer], g_opts.cpuW, "writer");
+		setup_proc_affinity(g_shm->pids[reader], g_opts.cpuR, "reader");
+		setup_proc_affinity(g_shm->pids[writer], g_opts.cpuW, "writer");
 #endif
 #ifdef h_thr
 	} else if (g_opts.mode == mt) {
@@ -400,9 +392,10 @@ static int setup_proc(void)
 		 * we want to make sure only one thread is responsible for
 		 * handling signals; that bloody mess
 		 */
+		memset(g_threads, 0, sizeof g_threads);
 		setup_sigmask(SIG_BLOCK, sigs_unb_t);
 		fputs("Continuing with 2 threads.\n", stderr);
-		/* sigrelay *must* be first  */
+		/* sigrelay _must_ be first  */
 		if ((ret = pthread_create(&t, NULL, task_sigrelay, "signalling thread"))) goto outt;
 		g_threads[sigrelay] = t;
 		if ((ret = pthread_create(&t, NULL, task_reader, "reader thread"))) goto outt;
@@ -422,10 +415,8 @@ static int setup_proc(void)
 	DEB("setup_proc finished successfully\n");
 	return 0;
 outt:
-	release(ERR_INI);
 	errno = ret;
 	perror("pthread_create()");
-	return -1;
 outp:
 	release(ERR_INI);
 	return -1;
@@ -502,9 +493,7 @@ read_i(struct fdpack_s *fd, uint8_t *restrict buf, size_t blk)
 {
 	ssize_t ret;
 	do {
-		//fprintf(stderr, "read entered\n");
 		ret = fd_read(fd, buf, blk);
-		//fprintf(stderr, "read exited\n");
 	} while (unlikely(ret < 0) && errno == EINTR && !ACCESS_ONCE(g_shm->done));
 	return ret;
 }
@@ -817,9 +806,10 @@ void reap_procs(void)
 
 #ifndef h_mingw
 	DEB("Pre process reaping\n");
-	for (i = 0; i < sizeof g_pids / sizeof g_pids[0]; i++) {
-		if (g_pids[i] > 0)
-			TFR(waitpid(g_pids[i], NULL, 0));
+	for (i = 0; i < TASK_CNT; i++) {
+		DEB("PID %u: %u\n", i, g_shm->pids[i]);
+		if (g_shm->pids[i] > 0)
+			TFR(waitpid(g_shm->pids[i], NULL, 0));
 	}
 	DEB("Post process reaping\n");
 #endif
@@ -831,12 +821,12 @@ void reap_threads(void)
 
 #ifdef h_thr
 	DEB("Pre thread reaping\n");
-	/*
+/*
 	for (i = 0; i < sizeof g_threads / sizeof g_threads[0]; i++) {
 		if (g_threads[i] > 0)
 			pthread_join(g_threads[i], NULL);
 	}
-	*/
+*/
 	if (g_threads[reader] > 0)
 		pthread_join(g_threads[reader], NULL);
 	if (g_threads[writer] > 0)
