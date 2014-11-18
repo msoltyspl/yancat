@@ -895,9 +895,9 @@ int main(int argc, char **argv)
 		goto out1;
 	if (setup_winsock() < 0)
 		goto out1;
+	if ((ret = setup_fds()) < 0)
+		goto out2;
 	do {
-		if ((ret = setup_fds()) < 0)
-			goto out2;
 		if ((ret = setup_env()) < 0)
 			goto out3;
 		if ((ret = setup_proc()) < 0)
@@ -914,9 +914,9 @@ int main(int argc, char **argv)
 			ret = reaper();
 out4:
 		cleanup_env();
-out3:
-		cleanup_fds();
 	} while (g_opts.loop && ret >= 0 && g_role == arbiter);
+out3:
+	cleanup_fds();
 out2:
 	cleanup_winsock();
 out1:
