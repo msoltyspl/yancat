@@ -129,15 +129,17 @@ static void notify_tasks(void)
 //		kill(-g_pgroup, SIGUSR1);
 		pid_t p = getpid();
 		for (i = 0; i < TASK_CNT; i++) {
-			if (g_shm->pids[i] > 0 && g_shm->pids[i] != p)
+			if (g_shm->pids[i] > 0 && g_shm->pids[i] != p) {
+				DEB("ping: %u -> %u\n", p, g_shm->pids[i]);
 				kill(g_shm->pids[i], SIGUSR1);
+			}
 		}
 #ifdef h_thr
 	} else if (g_opts.mode == mt) {
 		pthread_t t = pthread_self();
 		for (i = 0; i < TASK_CNT; i++) {
 			if (g_threads[i] > 0 && g_threads[i] != t) {
-				DEB(stderr, "ping: %lu -> %lu\n", t, g_threads[i]);
+				DEB("ping: %lu -> %lu\n", t, g_threads[i]);
 				pthread_kill(g_threads[i], SIGUSR1);
 			}
 		}
@@ -583,14 +585,10 @@ static ssize_t transfer_writer_epi(void)
 	buf_setlinew(g_buf);
 	while likely(siz = buf_can_w(g_buf)) {
 		if (unlikely(siz < g_opts.wblk) && g_opts.strict) {
-			ptrw = buf_fetch_w(g_buf, g_opts.wblk);
+			ptrw = buf_forcefetch_w(g_buf, siz);
 			pad = g_opts.wblk - siz;
-			fprintf (stderr, "\nINFO: strict mode writer padded with %zu 0s\n", pad);
-			/*
-			 * this is safe - buffer always has more than
-			 * 2*max(wblk,rblk), and we're not reading anymore
-			 */
 			memset(ptrw + siz, 0, pad);
+			fprintf (stderr, "INFO: strict mode writer: padding with %zu 0s\n", pad);
 		} else {
 			ptrw = buf_fetch_w(g_buf, siz);
 			pad = 0;
@@ -600,15 +598,13 @@ static ssize_t transfer_writer_epi(void)
 			g_shm->errW = errno;
 			break;
 		}
-		if unlikely((size_t)retw > siz) {
-			buf_commit_w(g_buf, retw);
-			//buf_commit_w(g_buf, siz);
-			//buf_commit_pad(g_buf, ptrw + siz, retw - siz);
-			buf_commit_wf(g_buf, siz);
-			break;
-		}
+		if (unlikely((size_t)retw < g_opts.wblk) && g_opts.strict)
+			fprintf(stderr, "ALERT: strict mode writer wrote %zd instead of %zu\n", retw, g_opts.wblk);
 		buf_commit_w(g_buf, retw);
-		buf_commit_wf(g_buf, retw);
+		/* siz is before padding, and it's the only amount we can commit with did/got values in buf */
+		if unlikely(siz > retw)
+			siz = retw;
+		buf_commit_wf(g_buf, siz);
 	}
 	return retw;
 }
@@ -641,7 +637,7 @@ static void transfer_writer(void)
 			goto outt;
 		}
 		if (unlikely((size_t)retw < g_opts.wblk) && g_opts.strict)
-			fprintf(stderr, "WARN: strict mode writer wrote %zd instead of %zu\n", retw, g_opts.wblk);
+			fprintf(stderr, "ALERT: strict mode writer wrote %zd instead of %zu\n", retw, g_opts.wblk);
 		/* see comments in buffer files about the split */
 		buf_commit_w(g_buf, retw);
 		Pm(g_vars);
