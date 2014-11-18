@@ -80,6 +80,12 @@ buf_fetch_w(struct buf_s * restrict buf, size_t chunk)
 		return ibuf_fetch_wbounce(buf, chunk);
 }
 
+static inline uint8_t *
+buf_forcefetch_w(struct buf_s * restrict buf, size_t chunk)
+{
+	return ibuf_fetch_wbounce(buf, chunk);
+}
+
 static inline void
 buf_commit_r(struct buf_s *restrict buf, size_t chunk)
 {
@@ -103,6 +109,19 @@ buf_commit_w(struct buf_s * restrict buf, size_t chunk)
 		}
 	}
 }
+#if 0
+static inline void
+buf_crc_w(struct buf_s * restrict buf, const uint8_t * restrict ptr, size_t chunk)
+{
+	buf->wcrc = crc_calc(buf->wcrc, ptr, chunk);
+}
+
+static inline void
+buf_crc_r(struct buf_s * restrict buf, const uint8_t * restrict ptr, size_t chunk)
+{
+	buf->rcrc = crc_calc(buf->rcrc, ptr, chunk);
+}
+#endif
 /*
  * commit functions are split into r/rf and w/wf, because .f versions
  * modify values and we have no guarantees about atomicity - at the same time

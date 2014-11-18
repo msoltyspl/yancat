@@ -132,15 +132,13 @@ int buf_ctor(struct buf_s *buf, size_t bsiz, size_t rblk, size_t wblk, size_t hp
 		buf->iscir = 1;
 	}
 
-	if (!buf->iscir) {
-		csiz = Y_ALIGN(rblk, page) + Y_ALIGN(wblk, page);
-		if (shmw_ctor(&buf->scr, "/yancat-bounce-area", &csiz, 0, 0, 0) < 0) {
-			fputs("buf: failed to allocate shared memory bounce area\n", stderr);
-			goto out;
-		}
-		buf->rchunk = shmw_ptr(&buf->scr);
-		buf->wchunk = buf->rchunk + Y_ALIGN(rblk, page);
+	csiz = Y_ALIGN(rblk, page) + Y_ALIGN(wblk, page);
+	if (shmw_ctor(&buf->scr, "/yancat-bounce-area", &csiz, 0, 0, 0) < 0) {
+		fputs("buf: failed to allocate shared memory bounce area\n", stderr);
+		goto out;
 	}
+	buf->rchunk = shmw_ptr(&buf->scr);
+	buf->wchunk = buf->rchunk + Y_ALIGN(rblk, page);
 
 	buf->rblk = rblk;
 	buf->wblk = wblk;
@@ -154,35 +152,32 @@ void ibuf_commit_rbounce(struct buf_s *restrict buf, size_t chunk)
 {
 	size_t siz1, siz2;
 
-	if unlikely(buf->got + chunk <= buf->size) {
-		/*
-		 * this is necessary, as the read may return less than what we
-		 * fetched; in such case, 2nd memcpy below would be invalid
-		 */
-		memcpy(buf->ptr + buf->got, buf->rchunk, chunk);
-	} else {
-		siz1 = buf->size - buf->got;
-		siz2 = chunk - siz1;
-		memcpy(buf->ptr + buf->got, buf->rchunk, siz1);
+	/* we can't assume we're at the edge, as read may return less (even if buf_fetch_r() checked for it) */
+	siz1 = Y_MIN(buf->size - buf->got, chunk);
+	siz2 = chunk - siz1;
+	memcpy(buf->ptr + buf->got, buf->rchunk, siz1);
+	if likely(siz2)
 		memcpy(buf->ptr, buf->rchunk + siz1, siz2);
-	}
 
 	if unlikely(buf->dorcrc)
 		buf->rcrc = crc_calc(buf->rcrc, buf->rchunk, chunk);
 }
 
+/* fetch can be forced, we can't assume that it's at the edge */
 uint8_t *ibuf_fetch_wbounce(struct buf_s *restrict buf, size_t chunk)
 {
 	size_t siz1, siz2;
 
-	siz1 = buf->size - buf->did;
+	siz1 = Y_MIN(buf->size - buf->did, chunk);
 	siz2 = chunk - siz1;
 	memcpy(buf->wchunk, buf->ptr + buf->did, siz1);
-	memcpy(buf->wchunk + siz1, buf->ptr, siz2);
+	if likely(siz2)
+		memcpy(buf->wchunk + siz1, buf->ptr, siz2);
 
 	buf->fastw = 0;
 	return buf->wchunk;
 }
+
 void buf_setlinew(struct buf_s *buf)
 {
 	buf->flags |= M_LINEW;
