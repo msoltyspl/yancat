@@ -88,6 +88,8 @@ those two support or not at the same time.
 
 - hugetlbfs mount is detected and used if requested through options
 - affinity settings by default enabled
+- SysV huge pages - don't forget about /proc/sys/vm/hugetlb_shm_group (and
+  others related)
 
  generic:
 
@@ -103,7 +105,10 @@ random tips / info:
   this is probably your best friend if you need native tar handling in windows
   environemnt
 - keep in mind [bsd]tar's blocking options - they will close pipe in your face
-  if you don't set it properly and if you changed block size on the other side
+  when they are content with the transfer (it's racy too, you might be faster
+  with whatever you have for transfer ;); this may happen with different block
+  sizes - for example when you pipe to bsdtar at smaller block size than you
+  receive from the other source
 
 compilation:
 
