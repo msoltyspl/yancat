@@ -1,5 +1,5 @@
 /*
- * Copyright 2012 Michal Soltys <soltys@ziu.info>
+ * Copyright 2012+ Michal Soltys <soltys@ziu.info>
  *
  * This file is part of Yancat.
  *
