@@ -118,7 +118,7 @@ static int sigs_unb_t[] = { SIGUSR1, SIGTSTP, 0 };
  * in such case, release() alone (rising semaphores and setting shared
  * variables) is not enough - we have to ping other tasks with signal to break
  * from blocking calls; here we use SIGUSR1 for such purpose;
- * this can still race and "hang", as reading process can block after
+ * this can still race and lead to "hang", as reading process can block after
  * release() - but then we can simply ctrl-c
  */
 static void notify_tasks(void)
@@ -152,6 +152,9 @@ static void notify_tasks(void)
  * called if there was an error during initialization - release all locks, make
  * sure nothing blocks at any point; g_role is thread local, so errlog will get
  * proper value; furthermore, we have to ping other threads
+ *
+ * we could avoid semaphores here if we guaranteed that task functions would enter
+ * transfer functions and release all properly on their own
  */
 static void release(unsigned int type)
 {
@@ -663,8 +666,8 @@ outt:
 
 	/*
 	 * epilogue may be run only if reader is outside its reading loop;
-	 * it's important because we don't use any locking in epilogue, and
-	 * we also pad 0s in strict reblocking mode /into/ fetched buffer;
+	 * otherwise we would have to sync every writer/crcer to reader and then
+	 * enter writing epilogue
 	 *
 	 * note: master cannot override it to 1 due to atomic cmpxchg; without
 	 * it we could doublecheck with retw >= 0 to avoid unnecessary call,
