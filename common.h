@@ -53,6 +53,12 @@
 # define TFR(x) TEMP_FAILURE_RETRY(x)
 #endif
 
+#if DEBUG == 2
+# define DEB2(...) fprintf(stderr, __VA_ARGS__)
+#else
+# define DEB2(...) ((void)(0))
+#endif
+
 #if DEBUG == 1
 # define DEB(...) fprintf(stderr, __VA_ARGS__)
 # define DEBL(x, y) write(2, x, y)
