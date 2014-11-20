@@ -36,7 +36,7 @@ struct buf_s {
 	uint8_t *ptr, *rchunk, *wchunk;
 	size_t size, mask;
 	size_t got, did;
-	size_t rblk, wblk, rmin, wmin, rsp, wsp;
+	size_t rblk, wblk, rmin, wmin, rsp, rsp_inv, wsp;
 	int fastr, fastw, flags, dorcrc, dowcrc, iscir, wstall, rstall;
 	unsigned long long int allin, allout;
 	CRCINT rcrc, wcrc;
@@ -145,7 +145,7 @@ int  buf_ctor(struct buf_s *buf, size_t bsiz, size_t rblk, size_t wblk, size_t h
 void buf_dtor(struct buf_s *buf);
 void buf_dt(struct buf_s *buf);
 
-void buf_setextra(struct buf_s *buf, int rline, int wline, int rcrc, int wcrc, size_t rsp, size_t wsp);
+int buf_setextra(struct buf_s *buf, int rline, int wline, int rcrc, int wcrc, double rs, double ws);
 void buf_report_init(struct buf_s *buf);
 void buf_report_stats(struct buf_s *buf);
 void buf_setlinew(struct buf_s *buf);

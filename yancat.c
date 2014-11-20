@@ -282,8 +282,11 @@ static int setup_env(void)
 		fprintf (stderr, "setup_env(): buffer initialization failed.\n");
 		goto out1;
 	}
-	mpok = mpok && !noshr;
 	g_buf = &g_shm->buf;
+	if (buf_setextra(g_buf, g_opts.rline, g_opts.wline, g_opts.rcrc, g_opts.wcrc, g_opts.rsp, g_opts.wsp) < 0)
+		goto out2;
+
+	mpok = mpok && !noshr;
 
 	/* update g_opts.mode to reflect the above) */
 	g_opts.mode = mpok ? mp : (g_opts.mode == mt ? mt : sp);
@@ -302,7 +305,6 @@ static int setup_env(void)
 	}
 #endif
 
-	buf_setextra(g_buf, g_opts.rline, g_opts.wline, g_opts.rcrc, g_opts.wcrc, g_opts.rsp, g_opts.wsp);
 	buf_report_init(g_buf);
 
 	return 0;

@@ -41,8 +41,10 @@ size_t buf_can_r(struct buf_s *restrict buf)
 		emp = buf->size;
 
 	if unlikely(buf->rstall) {
-		if likely(emp < buf->rsp)
+		/* hav = (~emp + 1) & mask; equivalent of hav > buf->rsp */
+		if likely(emp < buf->rsp_inv)
 			return 0;
+		DEB2("read resumed: fill  %zu\n", (buf->got - buf->did) & buf->mask);
 		buf->rstall = 0;
 		/* min. free space is guaranteed after options' parsing */
 		return buf->rblk;
@@ -51,9 +53,11 @@ size_t buf_can_r(struct buf_s *restrict buf)
 		return buf->rblk;
 	if likely(emp > buf->rmin)
 		return emp;
-	if unlikely(buf->rsp)
+	if unlikely(buf->rsp) {
 		/* overrun, back off */
 		buf->rstall = 1;
+		DEB2("read stalled: fill    %zu\n", (buf->got - buf->did) & buf->mask);
+	}
 	return 0;
 }
 
@@ -66,6 +70,7 @@ size_t buf_can_w(struct buf_s * restrict buf)
 	if unlikely(buf->wstall) {
 		if likely(hav < buf->wsp)
 			return 0;
+		DEB2("write resumed: fill %zu\n", hav);
 		buf->wstall = 0;
 		/* min. free space is guaranteed after options' parsing */
 		return buf->wblk;
@@ -74,9 +79,11 @@ size_t buf_can_w(struct buf_s * restrict buf)
 		return buf->wblk;
 	if likely(hav >= buf->wmin)
 		return hav;
-	if unlikely(buf->wsp)
+	if unlikely(buf->wsp) {
 		/* underrun, back off */
 		buf->wstall = 1;
+		DEB2("write stalled: fill   %zu\n", hav);
+	}
 	return 0;
 }
 
@@ -102,7 +109,7 @@ void buf_dtor(struct buf_s *buf)
 int buf_ctor(struct buf_s *buf, size_t bsiz, size_t rblk, size_t wblk, size_t hpage)
 {
 	int ret, idx;
-	size_t csiz, page = get_page();
+	size_t csiz, page = get_page(), blk;
 
 	if (!buf) {
 		fputs("buf: no buf ?\n", stderr);
@@ -130,6 +137,14 @@ int buf_ctor(struct buf_s *buf, size_t bsiz, size_t rblk, size_t wblk, size_t hp
 	if (shmw_cir(&buf->buf) >= 0) {
 		buf->flags |= M_CIR;
 		buf->iscir = 1;
+	}
+
+	// TODO sharp should be enough ... verify this
+	blk = Y_MAX(rblk, wblk);
+	if (bsiz <= 2*blk) {
+		fputs("Buffer size must be greater than 2*max(rblk, wblk),\n"
+		      "  to avoid corner cases.\n", stderr);
+		goto out;
 	}
 
 	csiz = Y_ALIGN(rblk, page) + Y_ALIGN(wblk, page);
@@ -183,11 +198,16 @@ void buf_setlinew(struct buf_s *buf)
 	buf->flags |= M_LINEW;
 	buf->wmin = 1;
 	buf->wsp = 0;
+#if DEBUG == 2
+	if (buf->wstall)
+		DEB2("write forcibly (epilogue) resumed: fill %zu\n", (buf->got - buf->did) & buf->mask);
+#endif
 	buf->wstall = 0;
 }
 
-void buf_setextra(struct buf_s *buf, int rline, int wline, int rcrc, int wcrc, size_t rsp, size_t wsp)
+int buf_setextra(struct buf_s *buf, int rline, int wline, int rcrc, int wcrc, double rs, double ws)
 {
+	size_t rsp, wsp;
 	if (rline) {
 		buf->flags |= M_LINER;
 		buf->rmin = 1;
@@ -208,13 +228,44 @@ void buf_setextra(struct buf_s *buf, int rline, int wline, int rcrc, int wcrc, s
 		buf->wcrc = crc_beg();
 		buf->dowcrc = 1;
 	}
+	rsp = (size_t)(0.5 + rs*(double)buf->size);
 	if (rsp) {
+		/*
+		 * write will stop at nodata when wblk-1 or less data is ready;
+		 * we must restart reads then; rsp as below does that at
+		 * wblk+1;
+		 * at the same time we need at least rblk+1 (+1 due to
+		 * ambiguity) space to read
+		 * basic condition: hav(dec) <= rsp to resume reads
+		 */
+		if (rsp <= buf->wblk || rsp >= buf->size - buf->rblk) {
+			fputs("Read resume point is too small or leaves not enough space.\n", stderr);
+			return -1;
+		}
+		buf->rsp_inv = buf->size - rsp;
 		buf->rsp = rsp;
 	}
+	wsp = (size_t)(0.5 + ws*(double)buf->size);
 	if (wsp) {
+		/*
+		 * read will stop at nospace when rblk-1 or less space is
+		 * available; as buffer will never be fully filled (due to hav
+		 * == got ambiguity) nospace will happen at rblk;
+		 * we must restarts writes then; wsp as below does that at
+		 * rblk+1;
+		 * at the same time we need at least wblk data to write (wblk+1
+		 * below)
+		 * basic condition: hav(inc) >= wsp to resume writes
+		 */
+		if (wsp >= buf->size - buf->rblk || wsp <= buf->wblk) {
+			fputs("Write resume point is too big or leaves.\n", stderr);
+			return -1;
+		}
 		buf->wsp = wsp;
 		buf->wstall = 1;
+		DEB2("write forcibly (pre-run) stalled: fill 0\n");
 	}
+	return 0;
 }
 
 static void rep_crc(int c, CRCINT _crc, unsigned long long cnt)
@@ -250,12 +301,16 @@ void buf_report_init(struct buf_s * restrict buf)
 		"  size:      %zu\n"
 		"  re. block: %zu%s\n"
 		"  wr. block: %zu%s\n"
+		"  re. unstall @: %zd\n"
+		"  wr. unstall @: %zd\n"
 		"  shared:    %s\n"
 		"  wrapped:   %s\n"
 		"  huge page: %s\n",
 		buf->size,
 		buf->rblk, buf->flags & M_LINER ? " (byte/line mode)" : "",
 		buf->wblk, buf->flags & M_LINEW ? " (byte/line mode)" : "",
+		buf->rsp ? (ssize_t)buf->rsp : -1,
+		buf->wsp ? (ssize_t)buf->wsp : -1,
 		buf->flags & M_SHM ? "yes" : "no",
 		buf->flags & M_CIR ? "yes" : "no",
 		buf->flags & M_HUGE ? "yes" : "no"

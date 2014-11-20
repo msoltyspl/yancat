@@ -85,8 +85,8 @@ static void help(void)
 		"	-n <size>	try to read at least <n> blocks (n/a if MP)\n"
 		"	-N <size>	try to write at least <n> blocks (n/a if MP)\n"
 		"	-H <size>	request huge pages of size <n> (linux only)\n"
-		"	-p <float>	stall point after overrun (reader)\n"
-		"	-P <float>	stall point after underrun (writer)\n"
+		"	-p <float>	resume point after overrun (reader)\n"
+		"	-P <float>	resume point after underrun (writer)\n"
 #ifdef h_affi
 		"	-u <cpu>	try to run reader only on <cpu>\n"
 		"	-U <cpu>	try to run writer only on <cpu>\n"
@@ -163,7 +163,6 @@ int opt_parse(struct options_s *opts, int argc, char **argv)
 {
 	static const char err_inv[] = "Invalid -%c value.\n";
 	double rs = 0, ws = 0;
-	size_t blk;
 	int opt;
 
 	set_default(opts);
@@ -233,7 +232,7 @@ int opt_parse(struct options_s *opts, int argc, char **argv)
 					fprintf(stderr, err_inv, opt);
 					goto out;
 				}
-				rs = 1.0 - rs;
+				opts->rsp = rs;
 				break;
 			case 'P':
 				ws = get_double(optarg);
@@ -241,6 +240,7 @@ int opt_parse(struct options_s *opts, int argc, char **argv)
 					fprintf(stderr, err_inv, opt);
 					goto out;
 				}
+				opts->wsp = ws;
 				break;
 #ifdef h_affi
 			case 'u':
@@ -302,28 +302,6 @@ int opt_parse(struct options_s *opts, int argc, char **argv)
 		goto out;
 	}
 
-	blk = Y_MAX(opts->rblk, opts->wblk);
-	opts->rsp = (size_t)(0.5 + rs*(double)opts->bsiz);
-	opts->wsp = (size_t)(0.5 + ws*(double)opts->bsiz);
-
-	/* we require at least blk + 1 space in both cases (some sharp inequalities are possible in some cases) */
-	if (opts->rsp) {
-		if (opts->rsp <= blk || opts->rsp >= opts->bsiz - blk) {
-			fputs("Read stall point is too extreme.\n", stderr);
-			goto out;
-		}
-	}
-	if (opts->wsp) {
-		if (opts->wsp <= blk || opts->wsp >= opts->bsiz - blk) {
-			fputs("Write stall point is too extreme.\n", stderr);
-			goto out;
-		}
-	}
-	if (opts->bsiz <= 2*blk) {
-		fputs("Buffer size must be greater than 2*max(rblk, wblk),\n"
-		      "  to avoid corner cases.\n", stderr);
-		goto out;
-	}
 #if 0
 	if (opts->rblk < opts->wblk && opts->rline && !opts->wline) {
 		fputs("\nrblk must be greater or equal to wblk, if the left side is in the \"line\" mode,\n    and the right side is in the reblocking mode.\n", stderr);

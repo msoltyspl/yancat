@@ -30,7 +30,7 @@ struct options_s {
 	size_t bsiz;
 	size_t rblk, rcnt;
 	size_t wblk, wcnt;
-	size_t rsp, wsp;
+	double rsp, wsp;
 	size_t hpage;
 	int fsync, strict, rline, wline, rcrc, wcrc, loop, cpuR, cpuW;
 	enum mode_t mode;
