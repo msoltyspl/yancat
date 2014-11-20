@@ -84,7 +84,7 @@ static struct shr_s {
 	struct buf_s buf;
 	size_t xrsiz, xwsiz;
 	int errR, errW;
-	sig_atomic_t done, mwait, swait;
+	sig_atomic_t abrt, done, mwait, swait;
 	sig_atomic_t errlog[ERRL_CNT];
 #ifndef h_mingw
 	pid_t pids[TASK_CNT];
@@ -159,7 +159,8 @@ static void notify_tasks(void)
 static void release(unsigned int type)
 {
 	g_shm->errlog[type + g_role] = 1;
-	g_shm->done = 2;
+	g_shm->abrt = 1;
+	g_shm->done = 1;
 	barrier();
 #ifndef h_mingw
 	if (g_opts.mode != sp) {
@@ -207,8 +208,9 @@ static void sh_terminate(int sig)
 		DEBL("sigusr\n", 7);
 	} else {
 		g_shm->errlog[g_role] = 1;
-		g_shm->done = 2;
-		DEBL("other\n", 6);
+		g_shm->abrt = 1;
+		g_shm->done = 1;
+		DEBL("sigother\n", 6);
 	}
 	barrier();
 	// g_shm->errlog[ERR_INI + g_role] = 1;
@@ -561,20 +563,16 @@ static void transfer_reader(void)
 	Vm(g_vars);
 outt:
 	/*
-	 * only we can set 'done' to 1 - any other events (init, signal, error)
-	 * will always set it to 2;
-	 *
-	 * this gives us clean indication that master exited from its reading
-	 * loop and slave can execute its epilogue safely; also note cmpxchg -
-	 * we never change already changed flag
-	 *
-	 * also see relevant comments in slave
+	 * to avoid cmpxchg we use 2 separate flags - one set on errors /
+	 * signal, and the other to terminate loops
 	 */
 	if (retr < 0) {
 		g_shm->errlog[ERR_ERR + g_role] = 1;
-		g_shm->done = 2;
-	} else if (retr == 0)
-		cmpxchg(g_shm->done, 0, 1);
+		g_shm->abrt = 1;
+	} else if (retr == 0) {
+		//cmpxchg(g_shm->done, 0, 1);
+	}
+	g_shm->done = 1;
 	Vb(g_nodata);
 #endif
 }
@@ -654,13 +652,10 @@ static void transfer_writer(void)
 	}
 	Vm(g_vars);
 outt:
-	/*
-	 * if we're here, we get either signalled by master, or errored - so
-	 * set 'done' only in the latter case
-	 */
 	if unlikely(retw < 0) {
 		g_shm->errlog[ERR_ERR + g_role] = 1;
-		g_shm->done = 2;
+		g_shm->abrt = 1;
+		g_shm->done = 1;
 	}
 	Vb(g_nospace);
 
@@ -668,13 +663,8 @@ outt:
 	 * epilogue may be run only if reader is outside its reading loop;
 	 * otherwise we would have to sync every writer/crcer to reader and then
 	 * enter writing epilogue
-	 *
-	 * note: master cannot override it to 1 due to atomic cmpxchg; without
-	 * it we could doublecheck with retw >= 0 to avoid unnecessary call,
-	 * but we could still lose external events (functionally not a problem
-	 * though)
 	 */
-	if (g_shm->done == 1)
+	if (!g_shm->abrt)
 		retw = transfer_writer_epi();
 /* oute: */
 	if (retw < 0) {
