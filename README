@@ -21,13 +21,17 @@ those two support or not at the same time.
 
 :::: features available at runtime:
 
+- buffer & block sizes (obviously ...)
+- reblocking (separate block sizes on input and output side)
+- strict reblocking writes (last block is padded with 0s if necessary)
+- resume points for reading (buffer fill level must drop to X after overrun before
+  reading is resumed)
+- resume points for writing (buffer fill level must rise to X after underrun before
+  writing is resumed)
 - threading / forking / single process mode (denoted as mt / mp / sp)
 - cpu affinity settings
 - in sp mode - preferred counts of blocks to read and write (separate values)
   per iteration
-- buffer & block sizes (obviously ...)
-- reblocking (separate block sizes on input and output side)
-- strict reblocking writes (last block is padded with 0s if necessary)
 - byte (aka "line") mode (reading/writing as soon as there is any space/data
   available, but no more than one block at the time)
 - optional fsync after transfer
@@ -38,10 +42,6 @@ those two support or not at the same time.
 - small subset of useful socket options
 - huge pages - (linux only, through hugetlbfs mount (autodetected))
 - "hardware" mmap-/shmat- wrapped circular buffer used, if possible
-- stall points for reading (buffer use must be less than X after overrun before
-  reading is allowed again)
-- stall points for writing (buffer use must be more than X after underrun
-  before writing is allowed again)
 - builtin looping using the same options (until error, or user's interruption);
   this essentially saves you one shell loop when both ends are persistent
   (think socket on one side, and tape device on the other)
@@ -57,7 +57,7 @@ those two support or not at the same time.
  through make arguments (just peek into Makefile for more details):
 
 - profiling generation (PROFILE=1) / use (PROFILE=2)
-- debug build (DEBUG=1) (nothing particulary special about it though)
+- debug build (DEBUG=1|2) (produces some debug messages)
 - installation directory (PREFIX=....), defaults to /usr/local
 - Makefile.devel as an optional include
 
@@ -89,7 +89,7 @@ those two support or not at the same time.
 - hugetlbfs mount is detected and used if requested through options
 - affinity settings by default enabled
 - SysV huge pages - don't forget about /proc/sys/vm/hugetlb_shm_group (and
-  others related)
+  other ones related)
 
  generic:
 
@@ -103,7 +103,7 @@ random tips / info:
 - 7-zip (inc. windows) can produce tars /and/ pipe them through stdin|out /and/
   with largefile support /and/ is blocking agnostic; gloria 7-zip ! Really,
   this is probably your best friend if you need native tar handling in windows
-  environemnt
+  environemnt. Since 9.30 it stores files using utf-8 in tar archives
 - keep in mind [bsd]tar's blocking options - they will close pipe in your face
   when they are content with the transfer (it's racy too, you might be faster
   with whatever you have for transfer ;); this may happen with different block
