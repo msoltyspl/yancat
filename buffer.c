@@ -92,8 +92,7 @@ void buf_dt(struct buf_s *buf)
 	if (!buf)
 		return;
 	shmw_dt(&buf->buf);
-	if (!buf->iscir)
-		shmw_dt(&buf->scr);
+	shmw_dt(&buf->scr);
 }
 
 void buf_dtor(struct buf_s *buf)
@@ -101,8 +100,7 @@ void buf_dtor(struct buf_s *buf)
 	if (!buf)
 		return;
 	shmw_dtor(&buf->buf);
-	if (!buf->iscir)
-		shmw_dtor(&buf->scr);
+	shmw_dtor(&buf->scr);
 	memset(buf, 0, sizeof *buf);
 }
 
@@ -139,7 +137,7 @@ int buf_ctor(struct buf_s *buf, size_t bsiz, size_t rblk, size_t wblk, size_t hp
 		buf->iscir = 1;
 	}
 
-	// TODO sharp should be enough ... verify this
+	// TODO sharp should be enough ... verify this (carefully)
 	blk = Y_MAX(rblk, wblk);
 	if (bsiz <= 2*blk) {
 		fputs("Buffer size must be greater than 2*max(rblk, wblk),\n"
