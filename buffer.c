@@ -298,14 +298,14 @@ void buf_report_init(struct buf_s * restrict buf)
 {
 	fprintf (stderr,
 		"Buffer setup:\n"
-		"  size:      %zu\n"
-		"  re. block: %zu%s\n"
-		"  wr. block: %zu%s\n"
-		"  re. unstall @: %zd\n"
-		"  wr. unstall @: %zd\n"
-		"  shared:    %s\n"
-		"  wrapped:   %s\n"
-		"  huge page: %s\n",
+		"  size:         %zu\n"
+		"  re. block:    %zu%s\n"
+		"  wr. block:    %zu%s\n"
+		"  re. resume @: %zd\n"
+		"  wr. resume @: %zd\n"
+		"  shared:       %s\n"
+		"  wrapped:      %s\n"
+		"  huge page:    %s\n",
 		buf->size,
 		buf->rblk, buf->flags & M_LINER ? " (byte/line mode)" : "",
 		buf->wblk, buf->flags & M_LINEW ? " (byte/line mode)" : "",
