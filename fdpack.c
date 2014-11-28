@@ -43,6 +43,7 @@
 # define S_IROTH 0
 /* unsigned int _CRT_fmode = _O_BINARY; */
 # define setsockopt_wr(a,b,c,d,e) setsockopt(a,b,c,(const char*)d,e)
+# define strerror_r(a,b,c) strerror(a)
 # ifndef MSG_WAITALL
 #  if _WIN32_WINNT >= 0x0502
 #   define MSG_WAITALL 0x8
@@ -304,7 +305,9 @@ fd_open_s(struct fdpack_s* fd)
 {
 	struct sockaddr saddr_alias;
 	int fdo, ret = -1;
+#ifndef h_mingw
 	char errinfo[256];
+#endif
 
 	if (!fd || fd->fd != -1)
 		return -1;

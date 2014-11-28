@@ -121,10 +121,10 @@ static int sigs_unb_t[] = { SIGUSR1, SIGTSTP, 0 };
  * this can still race and lead to "hang", as reading process can block after
  * release() - but then we can simply ctrl-c
  */
+#ifndef h_mingw
 static void notify_tasks(void)
 {
 	size_t i;
-#ifndef h_mingw
 	if (g_opts.mode == mp) {
 //		kill(-g_pgroup, SIGUSR1);
 		pid_t p = getpid();
@@ -145,8 +145,8 @@ static void notify_tasks(void)
 		}
 #endif
 	}
-#endif
 }
+#endif
 
 /*
  * called if there was an error during initialization - release all locks, make
@@ -313,9 +313,9 @@ out4:
 	semw_dtor(g_nospace);
 out3:
 	mtxw_dtor(g_vars);
+#endif
 out2:
 	buf_dtor(g_buf);
-#endif
 out1:
 	shmw_dtor(&g_chunk);
 	return -1;
@@ -370,7 +370,9 @@ static void setup_thread_affinity(pthread_t thr, int cpu, const char *tag)
 }
 #endif
 
+#ifdef h_thr
 static void *task_sigrelay(void *arg __attribute__ ((__unused__)));
+#endif
 static void *task_reader(void *arg __attribute__ ((__unused__)));
 static void *task_writer(void *arg __attribute__ ((__unused__)));
 static int setup_proc(void)
@@ -422,13 +424,15 @@ static int setup_proc(void)
 	}
 
 	DEB("setup_proc finished successfully\n");
-	return 0;
+	return ret;
+#ifndef h_mingw
 outt:
 	errno = ret;
 	perror("pthread_create()");
 outp:
 	release(ERR_INI);
 	return -1;
+#endif
 }
 
 static int setup_winsock(void)
@@ -723,9 +727,9 @@ outt:
  * async signals that interest us; after reaping worker threads, this thread is
  * pthread_cancel()'ed
  */
+#ifdef h_thr
 static void *task_sigrelay(void *arg __attribute__ ((__unused__)))
 {
-#ifdef h_thr
 	size_t i;
 	int sig;
 	sigset_t sigset;
@@ -741,9 +745,9 @@ static void *task_sigrelay(void *arg __attribute__ ((__unused__)))
 		release(ERR_SIG);
 	}
 
-#endif
 	return NULL;
 }
+#endif
 
 static void *task_reader(void *arg __attribute__ ((__unused__)))
 {
@@ -793,9 +797,9 @@ out1:
 
 void reap_procs(void)
 {
+#ifndef h_mingw
 	size_t i;
 
-#ifndef h_mingw
 	DEB("Pre process reaping\n");
 	for (i = 0; i < TASK_CNT; i++) {
 		DEB("PID %u: %u\n", i, g_shm->pids[i]);
