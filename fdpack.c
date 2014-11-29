@@ -35,15 +35,21 @@
 # include <netinet/tcp.h>
 # include <arpa/inet.h>
 # include <netdb.h>
+# define send_wr send
+# define recv_wr recv
 # define setsockopt_wr setsockopt
+# define closes_wr close
 # define _O_BINARY 0
 #else
 # include <winsock2.h>
 # define S_IRGRP 0
 # define S_IROTH 0
 /* unsigned int _CRT_fmode = _O_BINARY; */
+# define send_wr(a,b,c,d) send(a,b,(int)c,d)
+# define recv_wr(a,b,c,d) recv(a,b,(int)c,d)
 # define setsockopt_wr(a,b,c,d,e) setsockopt(a,b,c,(const char*)d,e)
 # define strerror_r(a,b,c) strerror(a)
+# define closes_wr closesocket
 # ifndef MSG_WAITALL
 #  if _WIN32_WINNT >= 0x0502
 #   define MSG_WAITALL 0x8
@@ -115,10 +121,10 @@ static void
 fd_info_(struct fdpack_s *fd)
 {
 	fprintf(stderr,"  type:  %s\n  dir:   %s\n  fd:    %d\n",
-		fd->type->kind,
-		fd->dir ? "output" : "input",
-		fd->fd
-       );
+			fd->type->kind,
+			fd->dir ? "output" : "input",
+			fd->fd
+	       );
 }
 static void
 fd_info_f(struct fdpack_s *fd)
@@ -133,7 +139,12 @@ fd_info_s(struct fdpack_s *fd)
 	const char *str;
 	int i, m;
 
-	fd_info_(fd);
+	fprintf(stderr,"  type:  %s\n  dir:   %s\n  fd:    "SOCKET_FPF"\n",
+			fd->type->kind,
+			fd->dir ? "output" : "input",
+			fd->s.fds
+	       );
+	// fd_info_(fd);
 	if (!(str = inet_ntoa(fd->s.saddr.sin_addr)))
 		str = "?";
 	fprintf(stderr,"  host:  %s (%s)\n  port:  %hu\n  proto: %d\n  options (%d):\n",
@@ -182,21 +193,24 @@ static int
 fd_close_s(struct fdpack_s *fd)
 {
 	int ret = -1;
-	if (fd->fd >= 0) {
 #ifdef h_mingw
+	if (fd->s.fds != INVALID_SOCKET) {
 		/*
 		 * shutdown() is supposedly needed for graceful termination on
 		 * windows; OTOH, some sources claim that closesocket() does so
 		 * implicitly;
 		 */
-		shutdown(fd->fd, SD_BOTH);
-		ret = closesocket(fd->fd);
+		shutdown(fd->s.fds, SD_BOTH);
+		if (closesocket(fd->s.fds) == SOCKET_ERROR)
+			ret = -1;
 #else
-		ret = TFR(close(fd->fd));
+	if (fd->s.fds >= 0) {
+		ret = TFR(close(fd->s.fds));
 #endif
 	} else
 		ret = 0;
 	fd->fd = -1;
+	fd->s.fds = INVALID_SOCKET;
 	return ret;
 }
 
@@ -224,7 +238,7 @@ fd_read_(struct fdpack_s *fd, void *buf, size_t count)
 static ssize_t
 fd_read_s(struct fdpack_s *fd, void *buf, size_t count)
 {
-	return recv(fd->fd, buf, count, fd->s.flags);
+	return recv_wr(fd->s.fds, buf, count, fd->s.flags);
 }
 
 static ssize_t
@@ -236,7 +250,7 @@ fd_write_(struct fdpack_s *fd, const void *buf, size_t count)
 static ssize_t
 fd_write_s(struct fdpack_s *fd, const void *buf, size_t count)
 {
-	return send(fd->fd, buf, count, MSG_NOSIGNAL);
+	return send_wr(fd->s.fds, buf, count, MSG_NOSIGNAL);
 }
 
 static int
@@ -276,23 +290,26 @@ out:
 	return ret;
 }
 
-static int
+static SOCKET
 fd_setup_socket(struct fdpack_s* fd)
 {
-	int i, fdo, ret;
+	SOCKET fdo;
+	int i, ret;
+#ifndef h_mingw
 	char errinfo[256];
+#endif
 
 	fdo = socket(PF_INET, fd->s.np.dom == IPPROTO_TCP ? SOCK_STREAM : SOCK_DGRAM, fd->s.np.dom);
-	if (fdo < 0) {
+	if (fdo == INVALID_SOCKET) {
 		perror("socket()");
-		return -1;
+		return INVALID_SOCKET;
 	}
 	for (i = 0; i < fd->s.np.copts; i++) {
 		ret = setsockopt_wr(fdo, fd->s.np.opts[i].lvl, fd->s.np.opts[i].opt, &fd->s.np.opts[i].val, sizeof fd->s.np.opts[i].val);
-		if (ret < 0) {
+		if (ret == SOCKET_ERROR) {
 			fprintf(stderr, "Unable to set socket option %s: %s", sp_getsobyint(fd->s.np.opts[i].opt, fd->s.np.opts[i].lvl), strerror_r(errno, errinfo, sizeof errinfo));
-			close(fdo);
-			return -1;
+			closes_wr(fdo);
+			return INVALID_SOCKET;
 			/* sp_delsobyidx(np->opts, &np->copts, i--); */
 		}
 	}
@@ -304,16 +321,18 @@ static int
 fd_open_s(struct fdpack_s* fd)
 {
 	struct sockaddr saddr_alias;
-	int fdo, ret = -1;
+	SOCKET fdo;
+	int ret;
+	SOCKET rets;
 #ifndef h_mingw
 	char errinfo[256];
 #endif
 
-	if (!fd || fd->fd != -1)
+	if (!fd || fd->s.fds != INVALID_SOCKET)
 		return -1;
 
 	fdo = fd_setup_socket(fd);
-	if (fdo < 0)
+	if (fdo == INVALID_SOCKET)
 		return -1;
 
 	if (fd->dir) {
@@ -322,7 +341,7 @@ fd_open_s(struct fdpack_s* fd)
 		/* TODO: handle EINTR from connect() that makes it finish asynchronously (select) */
 		memcpy(&saddr_alias, &fd->s.saddr, sizeof fd->s.saddr);
 		ret = connect(fdo, &saddr_alias, sizeof fd->s.saddr);
-		if (ret < 0) {
+		if (ret == SOCKET_ERROR) {
 			fprintf(stderr, "Unable to connect to %s: %s", fd->s.np.host, strerror_r(errno, errinfo, sizeof errinfo));
 			goto out;
 		}
@@ -331,30 +350,30 @@ fd_open_s(struct fdpack_s* fd)
 		/* avoid aliasing error, though this is false positive (at high warning levels) */
 		memcpy(&saddr_alias, &fd->s.saddr, sizeof fd->s.saddr);
 		ret = bind(fdo, &saddr_alias, sizeof fd->s.saddr);
-		if (ret < 0) {
+		if (ret == SOCKET_ERROR) {
 			perror("bind()");
 			goto out;
 		}
 		if (fd->s.np.dom == IPPROTO_TCP) {
 			ret = listen(fdo, 1);
-			if (ret < 0) {
+			if (ret == SOCKET_ERROR) {
 				perror("listen()");
 				goto out;
 			}
-			ret = accept(fdo, NULL, NULL);
-			if (ret < 0) {
+			rets = accept(fdo, NULL, NULL);
+			if (rets == INVALID_SOCKET) {
 				perror("accept()");
 				goto out;
 			}
-			TFR(close(fdo));
-			fdo = ret;
+			TFR(closes_wr(fdo));
+			fdo = rets;
 		}
 	}
 
-	fd->fd = fdo;
+	fd->s.fds = fdo;
 	return 0;
 out:
-	TFR(close(fdo));
+	TFR(closes_wr(fdo));
 	return -1;
 }
 
@@ -462,6 +481,7 @@ int fd_ctor_s(struct fdpack_s* fd, int dir, struct netpnt_s *np, int msgwait)
 
 	fd->type = &_fdsock;
 	fd->fd = -1;
+	fd->s.fds = INVALID_SOCKET;
 	fd->dir = dir;
 	fd->sync = 0;
 	if (dir)

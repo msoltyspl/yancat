@@ -21,8 +21,13 @@
 
 #ifndef h_mingw
 # include <netinet/in.h>
+# define SOCKET int
+# define INVALID_SOCKET -1
+# define SOCKET_ERROR -1
+# define SOCKET_FPF "%d"
 #else
 # include <winsock2.h>
+# define SOCKET_FPF "%u"
 #endif
 
 #include "parse.h"
@@ -48,6 +53,11 @@ struct fdpack_s {
 			char *path;
 		} f;
 		struct {
+			/*
+			 * dumb fucking winsock2, we cannot use fd as int ...
+			 * or rather we can, but better not ...
+			 */
+			SOCKET fds;
 			struct sockaddr_in saddr;
 			struct netpnt_s np;
 			int flags;
