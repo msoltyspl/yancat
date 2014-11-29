@@ -75,7 +75,7 @@ static void help(void)
 		"\n"
 		"Yancat\n"
 		YANVER "\n"
-		"(c) 2012 Michal Soltys\n"
+		"(c) 2012+ Michal Soltys\n"
 		"\n"
 		"	-i <spec>	input fd specification\n"
 		"	-o <spec>	output fd specification\n"
